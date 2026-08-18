@@ -1,0 +1,39 @@
+# Temporary and backup files
+*.bak
+*.tmp
+sharmory-test-*
+
+# Test and coverage artifacts
+cover.out
+cover.html
+last.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor and IDE configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

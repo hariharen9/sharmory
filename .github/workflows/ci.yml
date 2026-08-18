@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-unix:
+    name: Test Zsh on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Zsh (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+
+      - name: Run Zsh Test Suite
+        run: |
+          chmod +x test-sharmory.zsh
+          ./test-sharmory.zsh
+
+  test-windows:
+    name: Test PowerShell on Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run PowerShell Test Suite (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          .\test-sharmory.ps1
+
+      - name: Run PowerShell Test Suite (PowerShell Core 7+)
+        shell: pwsh
+        run: |
+          .\test-sharmory.ps1

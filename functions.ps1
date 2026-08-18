@@ -5,8 +5,8 @@
 # Add this to your $PROFILE (find its path with: echo $PROFILE):
 #   . "$HOME\sharmory\functions.ps1"
 #
-# Optional tools some functions use if present (all degrade gracefully):
-#   fzf, jq, eza, git, docker, kubectl, go, node, python, openssl (via Git for Windows)
+# Optional tools used if present (all degrade gracefully):
+#   git, docker, kubectl, go, node, python, eza, tldr
 #
 #########################################################################
 # 0. INTERNAL HELPERS
@@ -15,7 +15,7 @@
 function Test-SharmoryDependency {
     param([string]$Name)
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-        Write-Host "⚠️  '$Name' is required for this command. Install it and try again." -ForegroundColor Yellow
+        Write-Host "[!] '$Name' is required for this command. Install it and try again." -ForegroundColor Yellow
         return $false
     }
     return $true
@@ -50,29 +50,6 @@ function lsd {
     }
 }
 
-# Interactively cd into a subdirectory picked via fzf
-function fcd {
-    if (-not (Test-SharmoryDependency fzf)) { return }
-    $dir = Get-ChildItem -Recurse -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '\\\.git' } |
-        Select-Object -ExpandProperty FullName | fzf --prompt="cd> "
-    if ($dir) { Set-Location $dir }
-}
-
-# Fuzzy-search file contents and open the picked match in $env:EDITOR (or notepad)
-function ftext {
-    if (-not (Test-SharmoryDependency fzf)) { return }
-    $editor = if ($env:EDITOR) { $env:EDITOR } else { "notepad" }
-    $result = Get-ChildItem -Recurse -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '\\(\.git|node_modules|\.venv|venv|dist|build)\\' } |
-        Select-String -Pattern "." -ErrorAction SilentlyContinue |
-        ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line)" } | fzf
-    if ($result) {
-        $file = ($result -split ":")[0]
-        & $editor $file
-    }
-}
-
 # Show a file's Windows permissions (ACL) in a readable form
 # Usage: permsof <file>
 function permsof {
@@ -82,7 +59,7 @@ function permsof {
         return
     }
     $acl = Get-Acl $Path
-    Write-Host "📄 $Path"
+    Write-Host "[File] $Path"
     Write-Host "   Owner: $($acl.Owner)"
     Write-Host ""
     foreach ($access in $acl.Access) {
@@ -208,26 +185,6 @@ function clipcopy {
     Write-Host "Copied contents of $Path"
 }
 
-# Watch a path for changes and re-run a command on each change
-# Usage: watchrun <path> <scriptblock>
-function watchrun {
-    param(
-        [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][scriptblock]$Command
-    )
-    $fsw = New-Object System.IO.FileSystemWatcher $Path
-    $fsw.IncludeSubdirectories = $true
-    $fsw.EnableRaisingEvents = $true
-    Write-Host "Watching $Path — Ctrl+C to stop"
-    while ($true) {
-        $result = $fsw.WaitForChanged([System.IO.WatcherChangeTypes]::All, 1000)
-        if (-not $result.TimedOut) {
-            Clear-Host
-            & $Command
-        }
-    }
-}
-
 #########################################################################
 # 2. GIT
 #########################################################################
@@ -276,7 +233,7 @@ function gacp {
     param([Parameter(Mandatory)][string]$Message)
     $branch = git branch --show-current
     if ($branch -in @("main", "master")) {
-        $confirm = Read-Host "⚠️  You're on '$branch'. Push directly? (y/N)"
+        $confirm = Read-Host "[!] You're on '$branch'. Push directly? (y/N)"
         if ($confirm -ne "y") { Write-Host "Aborted."; return }
     }
     git add -A
@@ -317,17 +274,6 @@ function gitprune {
         $branch = ($_ -split '\s+')[1]
         git branch -d $branch
     }
-}
-
-# Interactively pick a branch to switch to via fzf, including remotes
-function gswitch {
-    if (-not (Test-SharmoryDependency fzf)) { return }
-    $branch = git branch -a --format='%(refname:short)' | Where-Object { $_ -notmatch 'HEAD' } |
-        Sort-Object -Unique | fzf --prompt="branch> "
-    if (-not $branch) { return }
-    $local = $branch -replace '^origin/', ''
-    git switch $local 2>$null
-    if ($LASTEXITCODE -ne 0) { git switch -c $local $branch }
 }
 
 # Diff the current branch against main/master (or a given base)
@@ -400,54 +346,16 @@ function dockerlogs {
     docker logs -f --timestamps $Container
 }
 
-# Interactively pick a running container via fzf and open a shell inside it
-function dsh {
-    if (-not (Test-SharmoryDependency fzf)) { return }
-    $line = docker ps --format "{{.ID}}`t{{.Names}}`t{{.Image}}" | fzf
-    if (-not $line) { return }
-    $cid = ($line -split '\t')[0]
-    docker exec -it $cid sh -c "command -v bash >/dev/null && exec bash || exec sh"
-}
-
 # Show human-readable sizes of local Docker images
 function dockersizes {
     docker images --format "{{.Repository}}:{{.Tag}}`t{{.Size}}"
-}
-
-# Interactively pick a kubectl context and namespace via fzf, and switch to them
-function k8sctx {
-    if (-not (Test-SharmoryDependency fzf)) { return }
-    if (-not (Test-SharmoryDependency kubectl)) { return }
-    $ctx = kubectl config get-contexts -o name | fzf --prompt="context> "
-    if (-not $ctx) { return }
-    kubectl config use-context $ctx
-    $ns = (kubectl get ns -o name) -replace 'namespace/', '' | fzf --prompt="namespace> "
-    if (-not $ns) { return }
-    kubectl config set-context --current --namespace=$ns
-    Write-Host "Switched to context '$ctx', namespace '$ns'"
-}
-
-# Interactively pick a pod via fzf and stream its logs
-function klogs {
-    if (-not (Test-SharmoryDependency fzf)) { return }
-    $pod = (kubectl get pods -o name) -replace 'pod/', '' | fzf --prompt="pod> "
-    if (-not $pod) { return }
-    kubectl logs -f $pod
-}
-
-# Interactively pick a pod via fzf and exec a shell into it
-function kexec {
-    if (-not (Test-SharmoryDependency fzf)) { return }
-    $pod = (kubectl get pods -o name) -replace 'pod/', '' | fzf --prompt="pod> "
-    if (-not $pod) { return }
-    kubectl exec -it $pod -- sh -c "command -v bash >/dev/null && exec bash || exec sh"
 }
 
 # Show which pods are consuming the most CPU/memory (requires metrics-server)
 # Usage: ktop [cpu|memory]
 function ktop {
     param([string]$SortBy = "cpu")
-    kubectl top pods --sort-by=$SortBy
+    kubectl top pods "--sort-by=$SortBy"
 }
 
 # Describe events for the current namespace, most recent last
@@ -492,29 +400,7 @@ function goupdate {
 # Usage: gobench [pattern]
 function gobench {
     param([string]$Pattern = ".")
-    go test -bench=$Pattern -benchmem ./...
-}
-
-# Scaffold a minimal new Go module in the current directory
-# Usage: gonew <module-path>  e.g. gonew github.com/user/project
-function gonew {
-    param([Parameter(Mandatory)][string]$ModulePath)
-    go mod init $ModulePath
-    @'
-package main
-
-import "fmt"
-
-func main() {
-	fmt.Println("Hello, world!")
-}
-'@ | Out-File -Encoding utf8 main.go
-    Write-Host "Initialized Go module $ModulePath with a starter main.go"
-}
-
-# Watch .go files and re-run tests on save
-function gowatch {
-    watchrun -Path (Get-Location) -Command { go test ./... }
+    go test "-bench=$Pattern" -benchmem ./...
 }
 
 #########################################################################
@@ -593,13 +479,13 @@ function killport {
     foreach ($port in $Ports) {
         $conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
         if (-not $conns) {
-            Write-Host "❌ Nothing is listening on port $port."
+            Write-Host "[X] Nothing is listening on port $port."
             continue
         }
         foreach ($conn in $conns) {
-            Write-Host "🔄 Found process (PID: $($conn.OwningProcess)) using port $port."
+            Write-Host "[*] Found process (PID: $($conn.OwningProcess)) using port $port."
             Stop-Process -Id $conn.OwningProcess -Force
-            Write-Host "✅ Port $port is now free."
+            Write-Host "[OK] Port $port is now free."
         }
     }
 }
@@ -613,20 +499,6 @@ function portwho {
             $proc = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
             [PSCustomObject]@{ Port = $Port; PID = $_.OwningProcess; Process = $proc.ProcessName }
         }
-}
-
-# Check a domain's TLS certificate expiry date and days remaining
-# Usage: certcheck <domain>
-function certcheck {
-    param([Parameter(Mandatory)][string]$Domain)
-    $req = [System.Net.Sockets.TcpClient]::new($Domain, 443)
-    $stream = New-Object System.Net.Security.SslStream($req.GetStream())
-    $stream.AuthenticateAsClient($Domain)
-    $cert = $stream.RemoteCertificate
-    $expiry = [datetime]$cert.GetExpirationDateString()
-    Write-Host "Expires: $expiry"
-    Write-Host "Days remaining: $([math]::Round(($expiry - (Get-Date)).TotalDays))"
-    $stream.Close(); $req.Close()
 }
 
 # Look up A, CNAME, and MX records for a domain
@@ -659,7 +531,7 @@ function httpstatus {
         '^5' { "Server error" }
         default { "Unknown" }
     }
-    Write-Host "$code — $msg"
+    Write-Host "$code - $msg"
 }
 
 # Hit a URL, pretty-print JSON response, and show timing/status
@@ -674,7 +546,7 @@ function apihit {
     } catch {
         $resp.Content
     }
-    Write-Host "`n⏱  $($sw.Elapsed.TotalSeconds)s | status: $($resp.StatusCode)"
+    Write-Host "`n[Time] $($sw.Elapsed.TotalSeconds)s | status: $($resp.StatusCode)"
 }
 
 # Flush the local DNS cache
@@ -696,9 +568,9 @@ function tcpcheck {
     param([Parameter(Mandatory)][string]$HostName, [Parameter(Mandatory)][int]$Port)
     $result = Test-NetConnection -ComputerName $HostName -Port $Port -WarningAction SilentlyContinue
     if ($result.TcpTestSucceeded) {
-        Write-Host "✅ ${HostName}:${Port} is reachable"
+        Write-Host "[OK] ${HostName}:${Port} is reachable"
     } else {
-        Write-Host "❌ ${HostName}:${Port} is not reachable"
+        Write-Host "[X] ${HostName}:${Port} is not reachable"
     }
 }
 
@@ -706,7 +578,7 @@ function tcpcheck {
 # Usage: shorten <url>
 function shorten {
     param([Parameter(Mandatory)][string]$Url)
-    Invoke-RestMethod "https://is.gd/create.php?format=simple&url=$Url"
+    Invoke-RestMethod ('https://is.gd/create.php?format=simple&url=' + $Url)
 }
 
 #########################################################################
@@ -796,17 +668,6 @@ function pidtree {
         Select-Object ProcessId, ParentProcessId, Name | Format-Table -AutoSize
 }
 
-# Interactively pick a process via fzf and kill it
-function fkill {
-    if (-not (Test-SharmoryDependency fzf)) { return }
-    $line = Get-Process | Sort-Object CPU -Descending |
-        ForEach-Object { "{0}`t{1}" -f $_.Id, $_.ProcessName } | fzf
-    if (-not $line) { return }
-    $processId = ($line -split '\t')[0]
-    Stop-Process -Id $processId -Force
-    Write-Host "Killed PID $processId"
-}
-
 # Print the current date and time
 function now {
     Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -846,7 +707,7 @@ function jsonpp {
     Get-Content $Path -Raw | ConvertFrom-Json | ConvertTo-Json -Depth 20
 }
 
-# Load variables from a .env-style file into the current session ($env:)
+# Load variables from a .env-style file into environment variables
 # Usage: envload [file]  (defaults to .env)
 function envload {
     param([string]$Path = ".env")
@@ -872,15 +733,15 @@ function ffind {
     param([string]$FindFlag, [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest)
     if ($FindFlag -eq "-f") {
         $pattern = ($Rest -join " ")
-        if (-not $pattern) { Write-Host "Usage: ffind -f <filename>"; return }
+        if (-not $pattern) { Write-Host 'Usage: ffind -f <filename>'; return }
         Get-ChildItem -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$pattern*" } |
             Select-Object -ExpandProperty FullName
     } else {
         $pattern = (@($FindFlag) + $Rest) -join " "
         if (-not $pattern.Trim()) {
-            Write-Host "Usage:"
-            Write-Host "  ffind -f <filename>   # Find files"
-            Write-Host "  ffind <text>          # Find text in files"
+            Write-Host 'Usage:'
+            Write-Host '  ffind -f <filename>   # Find files'
+            Write-Host '  ffind <text>          # Find text in files'
             return
         }
         Get-ChildItem -Recurse -File -ErrorAction SilentlyContinue |
