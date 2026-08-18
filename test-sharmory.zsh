@@ -139,18 +139,28 @@ cat > "$MOCKBIN/curl" <<'EOF'
 #!/usr/bin/env bash
 url=""
 wfmt=""
+outfile=""
 has_o_devnull=false
 args=("$@")
 for ((i=0;i<${#args[@]};i++)); do
     case "${args[i]}" in http*) url="${args[i]}" ;; esac
     if [[ "${args[i]}" == "-w" ]]; then wfmt="${args[i+1]}"; fi
-    if [[ "${args[i]}" == "-o" && "${args[i+1]}" == "/dev/null" ]]; then has_o_devnull=true; fi
+    if [[ "${args[i]}" == "-o" ]]; then
+        outfile="${args[i+1]}"
+        if [[ "$outfile" == "/dev/null" ]]; then has_o_devnull=true; fi
+    fi
 done
 
 body='{"mock":"response"}'
 [[ "$url" == *crumbIssuer* ]] && body='{"crumb":"mockcrumb1234"}'
 [[ "$url" == *"/api/json"* && "$url" != *crumbIssuer* ]] && body='{"jobs":[{"name":"mock-job-1"},{"name":"mock-job-2"}]}'
+[[ "$url" == *functions.zsh* ]] && body='# mock updated functions.zsh'
 $has_o_devnull && body=""
+
+if [[ -n "$outfile" && "$outfile" != "/dev/null" ]]; then
+    mkdir -p "$(dirname "$outfile")"
+    printf '%s' "$body" > "$outfile"
+fi
 
 wout=""
 if [[ -n "$wfmt" ]]; then
@@ -158,7 +168,9 @@ if [[ -n "$wfmt" ]]; then
     wout="${wout//%\{time_total\}/0.01}"
 fi
 
-printf '%s' "$body"
+if [[ -z "$outfile" || "$outfile" == "/dev/null" ]]; then
+    printf '%s' "$body"
+fi
 printf '%b' "$wout"
 exit 0
 EOF
@@ -491,6 +503,12 @@ else
 fi
 run  "jenk-build"  "jenk-build mock-job"
 run  "jenk-logs"   "jenk-logs mock-job"
+
+#########################################################################
+# 12. SHARMORY MANAGEMENT
+#########################################################################
+echo "-- Sharmory Management --"
+run  "sharmory-update" "sharmory-update"
 
 #########################################################################
 # SUMMARY

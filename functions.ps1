@@ -814,3 +814,25 @@ function jenk-jobs {
     $resp = Invoke-RestMethod -Uri "$($env:JENKINS_URL)/api/json" -Headers (Get-SharmoryJenkinsAuth)
     $resp.jobs | Select-Object -ExpandProperty name
 }
+
+#########################################################################
+# 12. SHARMORY MANAGEMENT
+#########################################################################
+
+# Update Sharmory to the latest version from GitHub
+function sharmory-update {
+    $targetDir = Join-Path $HOME "sharmory"
+    $targetFile = Join-Path $targetDir "functions.ps1"
+    Write-Host "Updating Sharmory from GitHub..."
+    if (-not (Test-Path $targetDir)) {
+        New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+    }
+    try {
+        Invoke-WebRequest "https://raw.githubusercontent.com/hariharen9/sharmory/main/functions.ps1" -OutFile $targetFile -UseBasicParsing
+        . $targetFile
+        Write-Host "Sharmory successfully updated and reloaded!"
+    } catch {
+        Write-Host "Failed to update Sharmory: $_"
+    }
+}
+

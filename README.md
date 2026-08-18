@@ -1,12 +1,39 @@
 # Sharmory
 
-A single-file library of dev-focused zsh & PowerShell functions — git shortcuts, docker/k8s helpers,
+A single-file library of dev-focused Zsh & PowerShell functions — Git shortcuts, Docker/K8s helpers,
 Go/Node/Python workflow utilities, networking checks, security/encoding helpers, and
 general productivity tools. No plugin manager, no framework — just source one file.
 
-## Install
+## 🚀 Quick Install (1-Line)
 
-### Zsh (macOS / Linux / WSL)
+### macOS / Linux / WSL (Zsh)
+```bash
+curl -fsSL https://raw.githubusercontent.com/hariharen9/sharmory/main/install.sh | bash
+```
+
+### Windows (PowerShell 5.1+ & PowerShell Core 7+)
+```powershell
+irm https://raw.githubusercontent.com/hariharen9/sharmory/main/install.ps1 | iex
+```
+
+---
+
+## 🔄 Updating & Maintenance
+
+To update Sharmory to the latest version at any time, run:
+
+```bash
+sharmory-update
+```
+
+*(Works natively in both Zsh and PowerShell).*
+
+---
+
+## 📦 Manual Installation (Optional)
+
+<details>
+<summary><b>Manual Zsh Setup</b></summary>
 
 ```bash
 git clone https://github.com/hariharen9/sharmory.git ~/.sharmory
@@ -14,16 +41,15 @@ echo 'source ~/.sharmory/functions.zsh' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-Or, without cloning:
-
+Or without git:
 ```bash
 curl -o ~/.sharmory-functions.zsh https://raw.githubusercontent.com/hariharen9/sharmory/main/functions.zsh
 echo 'source ~/.sharmory-functions.zsh' >> ~/.zshrc
 ```
+</details>
 
-### Windows (PowerShell 5.1+ & PowerShell 7+)
-
-Add it to your `$PROFILE`:
+<details>
+<summary><b>Manual PowerShell Setup</b></summary>
 
 ```powershell
 # Create profile if it doesn't exist yet
@@ -34,6 +60,9 @@ git clone https://github.com/hariharen9/sharmory.git "$HOME\sharmory"
 Add-Content $PROFILE '. "$HOME\sharmory\functions.ps1"'
 . $PROFILE
 ```
+</details>
+
+---
 
 ## Optional dependencies
 
@@ -71,15 +100,7 @@ standard alternative) if it is missing.
 - **Productivity** — `note`, `jsonpp`, `envload`, `ffind`, `cheat`, `calc`, `qr`
 - **CI/Jenkins** — `jenk-crumb`, `jenk-build`, `jenk-logs`, `jenk-jobs`
   (needs `JENKINS_URL`, `JENKINS_USER`, `JENKINS_TOKEN` env vars)
-
-Every function has `-h`/usage text or a comment directly above it explaining what it
-does — run `grep -B2 '^myfunction()' functions.zsh` or just open the file.
-
-## Why one file?
-
-Most developers plugging this into their shell profile want a single `source` line and to be
-done with it. If you only want a subset, categories are clearly delimited with
-`# N. CATEGORY NAME` headers — just copy or delete what you want.
+- **Management** — `sharmory-update`
 
 ## Testing
 
@@ -106,15 +127,24 @@ chmod +x test-sharmory.zsh
 .\test-sharmory.ps1 -FunctionsPath path\to\functions.ps1
 ```
 
-Each run prints a PASS/FAIL/SKIP line per function and a summary count. Functions
-are marked SKIP rather than FAIL when an optional dependency genuinely isn't
-installed (`jq`, `entr`/`fswatch`, `python3`, `git`), or when a function is designed
-to loop forever (`watchrun`, `gowatch`).
+Each run prints a PASS/FAIL/SKIP line per function and a summary count.
 
 Exit code is `0` if everything passed or was cleanly skipped, `1` if anything
 actually failed — safe to wire into CI.
 
 **Platform Verification:** Both the Zsh and PowerShell implementations are verified end-to-end against live interpreters with 100% sandboxed test suites. In Zsh, early testing caught variable collisions with the special `$path` array. In PowerShell, testing verified parser compatibility across Windows PowerShell 5.1 and modern PowerShell Core (7+), ensuring clean dot-sourcing into `$PROFILE` with zero startup errors.
+
+## 🗑️ Uninstalling
+
+### macOS / Linux / WSL (Zsh)
+```bash
+curl -fsSL https://raw.githubusercontent.com/hariharen9/sharmory/main/uninstall.sh | bash
+```
+
+### Windows (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/hariharen9/sharmory/main/uninstall.ps1 | iex
+```
 
 ## Contributing
 

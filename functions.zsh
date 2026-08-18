@@ -1064,3 +1064,22 @@ jenk-jobs() {
     curl -s -u "$JENKINS_USER:$JENKINS_TOKEN" \
         "$JENKINS_URL/api/json" | jq -r '.jobs[].name'
 }
+
+#########################################################################
+# 12. SHARMORY MANAGEMENT
+#########################################################################
+
+# Update Sharmory to the latest version from GitHub
+sharmory-update() {
+    local target="${HOME}/.sharmory/functions.zsh"
+    echo "Updating Sharmory from GitHub..."
+    mkdir -p "$(dirname "$target")"
+    if curl -fsSL "https://raw.githubusercontent.com/hariharen9/sharmory/main/functions.zsh" -o "$target"; then
+        source "$target"
+        echo "Sharmory successfully updated and reloaded!"
+    else
+        echo "Failed to update Sharmory."
+        return 1
+    fi
+}
+

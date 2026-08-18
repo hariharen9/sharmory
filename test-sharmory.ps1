@@ -124,10 +124,14 @@ function Invoke-RestMethod {
     return [PSCustomObject]@{ mock = "response" }
 }
 function Invoke-WebRequest {
-    param([string]$Uri, [string]$Method, [switch]$UseBasicParsing, [Parameter(ValueFromRemainingArguments = $true)]$Rest)
+    param([string]$Uri, [string]$Method, [switch]$UseBasicParsing, [string]$OutFile, [Parameter(ValueFromRemainingArguments = $true)]$Rest)
     $content = '{"mock":"response"}'
     if ($Uri -like "*wttr*")    { $content = "Mock weather: Sunny, 22C" }
     if ($Uri -like "*qrenco*")  { $content = "[mock qr ascii art]" }
+    if ($Uri -like "*functions.ps1") { $content = "# mock updated functions.ps1" }
+    if ($OutFile) {
+        $content | Out-File -FilePath $OutFile -Encoding utf8
+    }
     [PSCustomObject]@{ StatusCode = 200; Content = $content }
 }
 function Resolve-DnsName {
@@ -361,6 +365,12 @@ Invoke-SharmoryTest "jenk-crumb" { jenk-crumb }
 Invoke-SharmoryTest "jenk-build" { jenk-build mock-job }
 Invoke-SharmoryTest "jenk-logs"  { jenk-logs mock-job }
 Invoke-SharmoryTest "jenk-jobs"  { jenk-jobs }
+
+#########################################################################
+# 12. SHARMORY MANAGEMENT
+#########################################################################
+Write-Host "-- Sharmory Management --"
+Invoke-SharmoryTest "sharmory-update" { sharmory-update }
 
 #########################################################################
 # SUMMARY & CLEANUP
