@@ -480,6 +480,11 @@ Invoke-SharmoryTest "sharmory-setup" {
     $out = sharmory-setup | Out-String
     if ($out -notmatch "Sharmory setup") { throw "expected setup report" }
 }
+Invoke-SharmoryTest "sharmory-bench" {
+    $out = sharmory-bench 2 | Out-String
+    if ($out -notmatch "Sharmory bench") { throw "expected bench report" }
+    if ($out -notmatch "ms") { throw "expected milliseconds" }
+}
 Invoke-SharmoryTest "registry" {
     $missing = @()
     foreach ($row in Get-SharmoryRegistry) {

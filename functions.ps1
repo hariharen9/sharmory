@@ -12,6 +12,10 @@
 # 0. INTERNAL HELPERS
 #########################################################################
 
+if ($MyInvocation.MyCommand.Path) {
+    $script:SharmoryFile = $MyInvocation.MyCommand.Path
+}
+
 function Test-SharmoryDependency {
     param([string]$Name)
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
@@ -1557,6 +1561,7 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "meta"; Name = "sharmory"; Description = "Interactive catalog and dispatcher"; Usage = "sharmory [list|help|run|doctor]"; Deps = "" }
         [pscustomobject]@{ Category = "meta"; Name = "sharmory-doctor"; Description = "Environment health check"; Usage = "sharmory doctor"; Deps = "" }
         [pscustomobject]@{ Category = "meta"; Name = "sharmory-setup"; Description = "Install optional CLI tools (fzf, jq, ...)"; Usage = "sharmory-setup"; Deps = "" }
+        [pscustomobject]@{ Category = "meta"; Name = "sharmory-bench"; Description = "Measure Sharmory source time in a clean shell"; Usage = "sharmory-bench [runs]"; Deps = "" }
         [pscustomobject]@{ Category = "meta"; Name = "sharmory-update"; Description = "Download the latest Sharmory from GitHub"; Usage = "sharmory-update"; Deps = "" }
     )
 }
@@ -1568,7 +1573,7 @@ function Get-SharmoryRegistryEntry {
 
 function Show-SharmoryUsage {
     @"
-Usage: sharmory [list|help|run|doctor|setup] [args]
+Usage: sharmory [list|help|run|doctor|setup|bench] [args]
 
   sharmory                    Interactive HUD (fzf, or a numbered menu)
   sharmory list [category]    List commands
@@ -1576,6 +1581,7 @@ Usage: sharmory [list|help|run|doctor|setup] [args]
   sharmory run <name> [args]  Run a catalogued command
   sharmory doctor             Environment health check
   sharmory setup              Install optional CLI tools (fzf, jq, eza, tldr)
+  sharmory bench [n]          Source-time benchmark (default 10 runs)
 
 Categories: files git docker k8s go node python net security system prod jenkins meta
 "@
@@ -1639,6 +1645,10 @@ function Invoke-SharmoryRun {
         sharmory-setup
         return
     }
+    if ($Name -eq "sharmory-bench" -or $Name -eq "bench") {
+        sharmory-bench @RunArgs
+        return
+    }
     $row = Get-SharmoryRegistryEntry $Name
     if (-not $row) {
         Write-Output "Unknown command: $Name"
@@ -1673,6 +1683,10 @@ function Invoke-SharmoryPromptAndRun {
     }
     if ($Name -eq "sharmory-setup" -or $Name -eq "setup") {
         sharmory-setup
+        return
+    }
+    if ($Name -eq "sharmory-bench" -or $Name -eq "bench") {
+        sharmory-bench
         return
     }
     $row = Get-SharmoryRegistryEntry $Name
@@ -1713,7 +1727,7 @@ function Start-SharmoryHudFzf {
 function Start-SharmoryHudMenu {
     $entries = @(Get-SharmoryRegistry)
     Write-Host "Sharmory HUD  (no fzf - numbered menu)"
-    Write-Host "Commands: list [cat] | help <name> | <number> | <name> | doctor | setup | q"
+    Write-Host "Commands: list [cat] | help <name> | <number> | <name> | doctor | setup | bench | q"
     Write-Host ""
     Write-Host ("  {0,3}  {1,-10} {2,-22} {3}" -f "#", "CATEGORY", "NAME", "DESCRIPTION")
     $i = 1
@@ -1733,6 +1747,7 @@ function Start-SharmoryHudMenu {
             '^(q|quit|exit)$' { return }
             '^doctor$' { sharmory-doctor }
             '^setup$' { sharmory-setup }
+            '^bench$' { sharmory-bench $rest }
             '^list$' { Show-SharmoryList $rest }
             '^help$' {
                 if ($rest) { Show-SharmoryHelp $rest } else { Show-SharmoryUsage }
@@ -1868,6 +1883,68 @@ function sharmory-setup {
     }
     Write-Host ""
     Write-Host "Done. New tools are available in new shells (or after refreshing PATH)."
+}
+
+# Time how long a clean PowerShell takes to dot-source this file (not $PROFILE).
+# Usage: sharmory-bench [runs]
+function sharmory-bench {
+    param([int]$Runs = 10)
+    if ($Runs -lt 1) {
+        Write-Host "Usage: sharmory-bench [runs]"
+        return
+    }
+    $src = $script:SharmoryFile
+    if (-not $src -or -not (Test-Path $src)) {
+        $src = Join-Path $HOME "sharmory\functions.ps1"
+    }
+    if (-not (Test-Path $src)) {
+        Write-Host "Cannot find functions.ps1"
+        return
+    }
+
+    $exe = (Get-Process -Id $PID).Path
+    Write-Output "Sharmory bench"
+    Write-Output "  file : $src"
+    Write-Output "  host : $exe"
+    Write-Output "  runs : $Runs  (1 warmup discarded)"
+    Write-Output ""
+
+    $esc = $src.Replace("'", "''")
+    $cmd = @"
+`$sw = [System.Diagnostics.Stopwatch]::StartNew()
+. '$esc'
+`$sw.Stop()
+Write-Output `$sw.Elapsed.TotalMilliseconds
+"@
+
+    $null = & $exe -NoProfile -NonInteractive -Command $cmd 2>$null
+    $times = @()
+    for ($i = 1; $i -le $Runs; $i++) {
+        $raw = & $exe -NoProfile -NonInteractive -Command $cmd 2>$null
+        if ($null -eq $raw -or "$raw" -eq "") { continue }
+        $ms = [double]$raw
+        $times += $ms
+        Write-Output ("  run {0,-3} {1,8:N3} ms" -f $i, $ms)
+    }
+
+    if ($times.Count -lt 1) {
+        Write-Output "Could not spawn a clean PowerShell to measure."
+        return
+    }
+    $stats = $times | Measure-Object -Minimum -Maximum -Average
+    Write-Output ""
+    Write-Output ("  min  {0:N3} ms" -f $stats.Minimum)
+    Write-Output ("  avg  {0:N3} ms" -f $stats.Average)
+    Write-Output ("  max  {0:N3} ms" -f $stats.Maximum)
+    Write-Output ""
+    Write-Output "  Oh-My-Zsh commonly adds 200-800 ms to every new tab."
+    Write-Output "  Sharmory is one sourced file - no plugin manager."
+    if ($stats.Average -lt 5) {
+        Write-Output "  Badge: sub-5ms source time on this machine."
+    } else {
+        Write-Output ("  This host averaged {0:N1} ms (Windows PowerShell parse is heavier than Zsh)." -f $stats.Average)
+        Write-Output "  The sub-5ms badge is the Zsh source target on Mac/Linux SSDs."
+    }
 }
 
 function Write-SharmoryDoctorLine {
@@ -2025,6 +2102,9 @@ function sharmory {
         }
         "doctor" { sharmory-doctor }
         "setup" { sharmory-setup }
+        "bench" {
+            if ($Rest -and $Rest.Count -gt 0) { sharmory-bench $Rest[0] } else { sharmory-bench }
+        }
         default {
             Write-Output "Unknown subcommand: $Command"
             Show-SharmoryUsage

@@ -727,6 +727,7 @@ run  "sharmory help mkcd" "sharmory help mkcd | grep -q Usage"
 run  "sharmory run now"   "sharmory run now"
 run  "sharmory doctor"    "sharmory doctor | grep -q 'Sharmory doctor'"
 run  "sharmory-setup"     "sharmory-setup | grep -q 'Sharmory setup'"
+run  "sharmory-bench"     "sharmory-bench 2 | grep -q 'Sharmory bench'"
 run  "registry"          "_sharmory_registry_check"
 
 #########################################################################
