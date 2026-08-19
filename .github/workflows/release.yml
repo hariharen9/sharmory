@@ -1,0 +1,171 @@
+name: Release packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Git tag to package (for example v0.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    name: Resolve version and archive hashes
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      tar_sha: ${{ steps.meta.outputs.tar_sha }}
+      zip_sha: ${{ steps.meta.outputs.zip_sha }}
+    steps:
+      - name: Compute hashes
+        id: meta
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${INPUT_TAG}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${TAG#v}"
+          TAR_URL="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.tar.gz"
+          ZIP_URL="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.zip"
+          curl -fsSL "${TAR_URL}" -o /tmp/sharmory.tar.gz
+          curl -fsSL "${ZIP_URL}" -o /tmp/sharmory.zip
+          TAR_SHA="$(sha256sum /tmp/sharmory.tar.gz | awk '{print $1}')"
+          ZIP_SHA="$(sha256sum /tmp/sharmory.zip | awk '{print $1}')"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tar_sha=${TAR_SHA}" >> "$GITHUB_OUTPUT"
+          echo "zip_sha=${ZIP_SHA}" >> "$GITHUB_OUTPUT"
+
+  homebrew:
+    name: Bump Homebrew tap
+    needs: metadata
+    runs-on: ubuntu-latest
+    if: ${{ secrets.TAP_GITHUB_TOKEN != '' }}
+    steps:
+      - name: Checkout Sharmory
+        uses: actions/checkout@v4
+
+      - name: Update tap formula
+        env:
+          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          TAR_SHA: ${{ needs.metadata.outputs.tar_sha }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/hariharen9/homebrew-tap.git" tap
+          cp packaging/homebrew/sharmory.rb tap/Formula/sharmory.rb
+          python3 - <<'PY'
+          import os, pathlib, re
+          p = pathlib.Path("tap/Formula/sharmory.rb")
+          text = p.read_text()
+          tag = os.environ["TAG"]
+          sha = os.environ["TAR_SHA"]
+          text = re.sub(r"archive/refs/tags/v[\d.]+.tar.gz", f"archive/refs/tags/{tag}.tar.gz", text)
+          text = re.sub(r'sha256 "[a-f0-9]+"', f'sha256 "{sha}"', text)
+          p.write_text(text)
+          PY
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/sharmory.rb
+          if git diff --cached --quiet; then
+            echo "No formula change"
+            exit 0
+          fi
+          git commit -m "sharmory ${TAG}"
+          git push
+
+  scoop:
+    name: Bump Scoop bucket
+    needs: metadata
+    runs-on: ubuntu-latest
+    if: ${{ secrets.SCOOP_GITHUB_TOKEN != '' || secrets.TAP_GITHUB_TOKEN != '' }}
+    steps:
+      - name: Checkout Sharmory
+        uses: actions/checkout@v4
+
+      - name: Update Scoop manifest
+        env:
+          GH_TOKEN: ${{ secrets.SCOOP_GITHUB_TOKEN || secrets.TAP_GITHUB_TOKEN }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          ZIP_SHA: ${{ needs.metadata.outputs.zip_sha }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/hariharen9/scoop-bucket.git" bucket-repo
+          mkdir -p bucket-repo/bucket
+          python3 - <<'PY'
+          import json, os, pathlib
+          version = os.environ["VERSION"]
+          tag = os.environ["TAG"]
+          sha = os.environ["ZIP_SHA"]
+          dest = pathlib.Path("bucket-repo/bucket/sharmory.json")
+          src = pathlib.Path("packaging/scoop/sharmory.json")
+          data = json.loads(src.read_text())
+          data["version"] = version
+          data["url"] = f"https://github.com/hariharen9/sharmory/archive/refs/tags/{tag}.zip"
+          data["hash"] = f"sha256:{sha}"
+          data["extract_dir"] = f"sharmory-{version}"
+          dest.write_text(json.dumps(data, indent=4) + "\n")
+          PY
+          cd bucket-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket/sharmory.json
+          if git diff --cached --quiet; then
+            echo "No scoop change"
+            exit 0
+          fi
+          git commit -m "sharmory ${TAG}"
+          git push
+
+  npm:
+    name: Publish npm
+    needs: metadata
+    runs-on: ubuntu-latest
+    if: ${{ secrets.NPM_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+  pypi:
+    name: Publish PyPI
+    needs: metadata
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        continue-on-error: true

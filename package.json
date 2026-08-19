@@ -1,0 +1,36 @@
+﻿{
+  "name": "sharmory",
+  "version": "0.1.0",
+  "description": "Installer for Sharmory - a dual-shell (Zsh + PowerShell) developer toolkit",
+  "license": "MIT",
+  "author": "Hariharen",
+  "bin": {
+    "sharmory-install": "packaging/npm/install.js"
+  },
+  "files": [
+    "functions.zsh",
+    "functions.ps1",
+    "packaging/npm/install.js",
+    "LICENSE",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hariharen9/sharmory.git"
+  },
+  "homepage": "https://github.com/hariharen9/sharmory",
+  "bugs": {
+    "url": "https://github.com/hariharen9/sharmory/issues"
+  },
+  "keywords": [
+    "zsh",
+    "powershell",
+    "shell",
+    "dotfiles",
+    "git",
+    "docker"
+  ],
+  "engines": {
+    "node": ">=16"
+  }
+}

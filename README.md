@@ -1,8 +1,15 @@
 # Sharmory
 
+[![GitHub release](https://img.shields.io/github/v/release/hariharen9/sharmory)](https://github.com/hariharen9/sharmory/releases)
+[![GitHub Downloads](https://img.shields.io/github/downloads/hariharen9/sharmory/total)](https://github.com/hariharen9/sharmory/releases)
+[![npm](https://img.shields.io/npm/dm/sharmory)](https://www.npmjs.com/package/sharmory)
+[![PyPI](https://img.shields.io/pypi/dm/sharmory)](https://pypi.org/project/sharmory/)
+
 A single-file library of dev-focused Zsh & PowerShell functions — Git shortcuts, Docker/K8s helpers,
 Go/Node/Python workflow utilities, networking checks, security/encoding helpers, and
 general productivity tools. No plugin manager, no framework — just source one file.
+
+The GitHub badge counts **Release page asset downloads** (source zip/tarball). Homebrew tap, Scoop, `curl | bash`, and `irm | iex` are not included in that number. npm and PyPI have their own counters.
 
 ## 🚀 Quick Install (1-Line)
 
@@ -14,6 +21,32 @@ curl -fsSL https://raw.githubusercontent.com/hariharen9/sharmory/main/install.sh
 ### Windows (PowerShell 5.1+ & PowerShell Core 7+)
 ```powershell
 irm https://raw.githubusercontent.com/hariharen9/sharmory/main/install.ps1 | iex
+```
+
+### Homebrew
+```bash
+brew tap hariharen9/tap
+brew install sharmory
+```
+Then add `source "$(brew --prefix)/opt/sharmory/functions.zsh"` to `~/.zshrc`.
+
+### Scoop
+```powershell
+scoop bucket add hariharen9 https://github.com/hariharen9/scoop-bucket
+scoop install sharmory
+```
+Then dot-source `functions.ps1` from the Scoop app directory in `$PROFILE`.
+
+### npm
+```bash
+npm install -g sharmory
+sharmory-install
+```
+
+### pip
+```bash
+pip install sharmory
+sharmory-install
 ```
 
 ## Command HUD
