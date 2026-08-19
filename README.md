@@ -134,6 +134,10 @@ actually failed — safe to wire into CI.
 
 **Platform Verification:** Both the Zsh and PowerShell implementations are verified end-to-end against live interpreters with 100% sandboxed test suites. In Zsh, early testing caught variable collisions with the special `$path` array. In PowerShell, testing verified parser compatibility across Windows PowerShell 5.1 and modern PowerShell Core (7+), ensuring clean dot-sourcing into `$PROFILE` with zero startup errors.
 
+## ⚠️ Plugin Manager Compatibility
+
+> If you use oh-my-zsh or another plugin manager, some function names may already exist as aliases. Sharmory automatically clears any conflicts at load time — sourcing it will always be clean.
+
 ## 🗑️ Uninstalling
 
 ### macOS / Linux / WSL (Zsh)

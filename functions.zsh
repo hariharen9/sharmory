@@ -11,6 +11,29 @@
 # 0. INTERNAL HELPERS
 #########################################################################
 
+# Silently unalias any name Sharmory defines as a function.
+# This prevents "defining function based on alias" parse errors when a plugin
+# manager (oh-my-zsh, Prezto, etc.) has already claimed one of our names.
+# The 2>/dev/null || true makes it a no-op when no such alias exists.
+unalias \
+    mkcd up lsd fcd ftext permsof extract compress duh sizeof findbig \
+    emptydirs dupfind bak cwd clipcopy watchrun \
+    gitundo branchclean branchage gitlog-today gacp gclone gwip gunwip \
+    gitprune gswitch prdiff gitcontributors gitsize gitconflicts gitignore \
+    dockernuke dockerclean-images dclean dockerlogs dsh dockersizes \
+    k8sctx klogs kexec ktop kevents \
+    covreport gomodwhy goclean goupdate gobench gonew gowatch \
+    npmclean npmscripts npmoutdated npmsize \
+    venvcreate pyclean pyfreeze \
+    myip localip killport portwho certcheck dnscheck httpstatus apihit \
+    flushdns weather tcpcheck shorten \
+    passgen pubkey genssh b64e b64d urlencode urldecode hashfile genuuid \
+    mem cpu pidtree fkill now timer \
+    note jsonpp envload ffind cheat calc qr \
+    jenk-crumb jenk-build jenk-logs jenk-jobs \
+    sharmory-update \
+    2>/dev/null || true
+
 # Detect OS once so functions can branch cheaply
 _sharmory_os() {
     case "$(uname)" in
