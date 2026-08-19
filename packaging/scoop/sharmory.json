@@ -4,12 +4,12 @@
     "homepage": "https://github.com/hariharen9/sharmory",
     "license": "MIT",
     "url": "https://github.com/hariharen9/sharmory/archive/refs/tags/v0.1.0.zip",
-    "hash": "sha256:88a9c77dbe8c8a886d22496df66bac5d50703f805d2fc4947609a135518d471f",
+    "hash": "sha256:c82cd1c06df7329dc87baa4c90980890028e68497fdfe17887c4c59d670b5922",
     "extract_dir": "sharmory-0.1.0",
     "notes": [
         "Sharmory is a sourced library, not a standalone binary.",
         "Add this line to your PowerShell profile ($PROFILE), using the Scoop app path:",
-        "    . \"$HOME\\scoop\\apps\\sharmory\\current\\functions.ps1\"",
+        "    . "$HOME\\scoop\\apps\\sharmory\\current\\functions.ps1"",
         "Then restart your shell or run: . $PROFILE"
     ]
 }
