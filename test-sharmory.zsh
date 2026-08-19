@@ -89,6 +89,8 @@ case "$*" in
     ps\ --format*)          printf "mockid123\tmockcontainer\tmockimage\n" ;;
     images\ -f\ dangling*)  : ;;  # empty = "no dangling images"
     images\ --format*)      printf "mockrepo:latest\t123MB\n" ;;
+    inspect\ --format*)     printf "MOCK_VAR=hello\nOTHER_VAR=world\n" ;;
+    build*)                 echo "Successfully built mockimage123" ;;
     *) : ;;
 esac
 exit 0
@@ -98,11 +100,14 @@ EOF
 cat > "$MOCKBIN/kubectl" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
-    config\ get-contexts*) echo "mock-context" ;;
-    get\ ns*)              echo "namespace/mock-ns" ;;
-    get\ pods*)            echo "pod/mock-pod" ;;
-    top\ pods*)            printf "NAME\tCPU\tMEMORY\nmock-pod\t1m\t2Mi\n" ;;
-    get\ events*)          echo "LAST SEEN   TYPE   REASON   OBJECT" ;;
+    config\ get-contexts*)          echo "mock-context" ;;
+    config\ set-context*)           echo "Context updated." ;;
+    get\ ns*)                       echo "namespace/mock-ns" ;;
+    get\ pods*)                     echo "pod/mock-pod" ;;
+    top\ pods*)                     printf "NAME\tCPU\tMEMORY\nmock-pod\t1m\t2Mi\n" ;;
+    get\ events*)                   echo "LAST SEEN   TYPE   REASON   OBJECT" ;;
+    describe\ pod*)                 printf "Name: mock-pod\nNamespace: default\n" ;;
+    port-forward*)                  echo "Forwarding from 127.0.0.1:8080 -> 80" ;;
     *) : ;;
 esac
 exit 0
@@ -141,14 +146,16 @@ url=""
 wfmt=""
 outfile=""
 has_o_devnull=false
+head_only=false
 args=("$@")
 for ((i=0;i<${#args[@]};i++)); do
-    case "${args[i]}" in http*) url="${args[i]}" ;; esac
+    case "${args[i]}" in http*|https*) url="${args[i]}" ;; esac
     if [[ "${args[i]}" == "-w" ]]; then wfmt="${args[i+1]}"; fi
     if [[ "${args[i]}" == "-o" ]]; then
         outfile="${args[i+1]}"
         if [[ "$outfile" == "/dev/null" ]]; then has_o_devnull=true; fi
     fi
+    if [[ "${args[i]}" == "-I" || "${args[i]}" == "-sI" ]]; then head_only=true; fi
 done
 
 body='{"mock":"response"}'
@@ -156,6 +163,10 @@ body='{"mock":"response"}'
 [[ "$url" == *"/api/json"* && "$url" != *crumbIssuer* ]] && body='{"jobs":[{"name":"mock-job-1"},{"name":"mock-job-2"}]}'
 [[ "$url" == *functions.zsh* ]] && body='# mock updated functions.zsh'
 $has_o_devnull && body=""
+$head_only && body="HTTP/2 200
+content-type: text/html; charset=UTF-8
+server: mock-server
+x-powered-by: sharmory-test"
 
 if [[ -n "$outfile" && "$outfile" != "/dev/null" ]]; then
     mkdir -p "$(dirname "$outfile")"
@@ -200,6 +211,41 @@ esac
 exit 0
 EOF
 
+# --- ping: canned output so pingcheck has something to parse ---
+cat > "$MOCKBIN/ping" <<'EOF'
+#!/usr/bin/env bash
+echo "PING $@ (93.184.216.34): 56 data bytes"
+echo "64 bytes from 93.184.216.34: icmp_seq=0 ttl=55 time=12.345 ms"
+echo "64 bytes from 93.184.216.34: icmp_seq=1 ttl=55 time=11.234 ms"
+echo "64 bytes from 93.184.216.34: icmp_seq=2 ttl=55 time=13.456 ms"
+echo "64 bytes from 93.184.216.34: icmp_seq=3 ttl=55 time=10.123 ms"
+echo "64 bytes from 93.184.216.34: icmp_seq=4 ttl=55 time=12.000 ms"
+echo ""
+echo "--- $@ ping statistics ---"
+echo "5 packets transmitted, 5 packets received, 0.0% packet loss"
+echo "round-trip min/avg/max/stddev = 10.123/11.832/13.456/1.145 ms"
+exit 0
+EOF
+
+# --- tree: canned output so treelist has a deterministic result ---
+cat > "$MOCKBIN/tree" <<'EOF'
+#!/usr/bin/env bash
+echo "."
+echo "├── file1.txt"
+echo "├── main.go"
+echo "└── sample.json"
+echo ""
+echo "0 directories, 3 files"
+exit 0
+EOF
+
+# --- ncdu: no-op (non-interactive in test context) ---
+cat > "$MOCKBIN/ncdu" <<'EOF'
+#!/usr/bin/env bash
+echo "[mock] ncdu $*"
+exit 0
+EOF
+
 # --- generic silent no-ops: clipboard tools, media/app launchers, system tools ---
 for cmd in afplay xdg-open open killall dscacheutil systemd-resolve pbcopy xclip wl-copy 7z unrar tldr; do
 cat > "$MOCKBIN/$cmd" <<EOF
@@ -227,6 +273,11 @@ export JENKINS_TOKEN="mocktoken"
 # Never actually terminate a real process, no matter what fkill/killport pick.
 kill() { echo "[mock] kill \$*"; return 0 }
 sudo() { echo "[mock] sudo \$*"; "\$@" }
+# Prevent mkproject's 'git commit' from needing a real identity in subshells
+export GIT_AUTHOR_NAME="Sharmory Test"
+export GIT_AUTHOR_EMAIL="test@sharmory.local"
+export GIT_COMMITTER_NAME="Sharmory Test"
+export GIT_COMMITTER_EMAIL="test@sharmory.local"
 source "$FUNCTIONS_FILE"
 EOF
 
@@ -262,6 +313,33 @@ mkdir -p node_modules && touch node_modules/.keep
 mkdir -p updir/sub
 echo "ssh-ed25519 AAAAmockkey mock@sharmory" > "$FAKEHOME/.ssh/id_ed25519.pub"
 
+# Create a fake ~/.ssh/config for sshconfig tests
+cat > "$FAKEHOME/.ssh/config" <<'SSHEOF'
+Host devserver
+    HostName dev.example.com
+    User deploy
+    Port 2222
+
+Host staging
+    HostName staging.example.com
+    User ubuntu
+SSHEOF
+
+# Create a second .env file for envdiff tests
+printf 'FOO=bar\nNEW_KEY=added\n' > "$WORKDIR/.env2"
+
+# Create two JSON files that differ for diffjson tests
+echo '{"a":1,"b":2}' > "$WORKDIR/a.json"
+echo '{"a":1,"b":3,"c":4}' > "$WORKDIR/b.json"
+
+# Create a sample JWT token (header.payload.sig — all base64url encoded, no real sig needed)
+# Header: {"alg":"HS256","typ":"JWT"}  Payload: {"sub":"1234567890","name":"Test","iat":1516239022}
+MOCK_JWT="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IlRlc3QiLCJpYXQiOjE1MTYyMzkwMjJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+
+# Create a clean .env and a bad .env for dotenv-check tests
+printf 'APP_ENV=development\nLOG_LEVEL=info\n' > "$WORKDIR/.env.clean"
+printf 'EMPTY_KEY=\nBAD KEY=oops\nFOO=has spaces here\nSECRET_TOKEN=plaintext\nFOO=duplicate\n' > "$WORKDIR/.env.bad"
+
 HAS_ENTR=0;    command -v entr &>/dev/null    && HAS_ENTR=1
 HAS_FSWATCH=0; command -v fswatch &>/dev/null && HAS_FSWATCH=1
 
@@ -269,53 +347,138 @@ HAS_FSWATCH=0; command -v fswatch &>/dev/null && HAS_FSWATCH=1
 # TEST RUNNER
 #########################################################################
 
-PASS=0
-FAIL=0
-SKIP=0
-TOTAL=0
+# Each result is written to $RESULTSDIR/<seq> as a one-line record:
+#   PASS|FAIL|SKIP <label> [exit-code] [log-snippet]
+# The seq counter keeps insertion order so output matches source order.
+RESULTSDIR="$SANDBOX/results"
+mkdir -p "$RESULTSDIR"
+_seq=0          # global insertion-order counter (incremented before fork)
+_pids=()        # all background PIDs, waited on before printing
 
-LOGFILE="$SANDBOX/last.log"
-
-run() {
-    local label="$1"
-    local cmd="$2"
-    ((TOTAL++))
+# _run_one: shared implementation — writes result file, returns rc
+_run_one() {
+    local label="$1" cmd="$2" seq="$3"
+    local logfile="$RESULTSDIR/${seq}.log"
+    local resfile="$RESULTSDIR/${seq}.res"
     local rc
     if [[ -n "$TIMEOUT_BIN" ]]; then
-        "$TIMEOUT_BIN" 10 zsh -c "source '$ENVFILE'; cd '$WORKDIR'; $cmd" >"$LOGFILE" 2>&1 </dev/null
+        "$TIMEOUT_BIN" 10 zsh -c "source '$ENVFILE'; cd '$WORKDIR'; $cmd" \
+            >"$logfile" 2>&1 </dev/null
         rc=$?
     else
-        zsh -c "source '$ENVFILE'; cd '$WORKDIR'; $cmd" >"$LOGFILE" 2>&1 </dev/null
+        zsh -c "source '$ENVFILE'; cd '$WORKDIR'; $cmd" \
+            >"$logfile" 2>&1 </dev/null
         rc=$?
     fi
     if [[ $rc -eq 0 ]]; then
-        printf "  PASS  %-22s\n" "$label"
-        ((PASS++))
+        printf 'PASS %s\n' "$label" > "$resfile"
     else
-        printf "  FAIL  %-22s (exit %d)\n" "$label" "$rc"
-        sed 's/^/        | /' "$LOGFILE" | head -4
-        ((FAIL++))
+        local snippet
+        snippet=$(sed 's/^/        | /' "$logfile" | head -4)
+        printf 'FAIL %s\x00%d\x00%s\n' "$label" "$rc" "$snippet" > "$resfile"
     fi
 }
 
+# run: fire test in background (parallel)
+run() {
+    local label="$1" cmd="$2"
+    (( _seq++ ))
+    local seq=$_seq
+    ( _run_one "$label" "$cmd" "$seq" ) &
+    _pids+=($!)
+}
+
+# runs: run test sequentially — use for tests with shared mutable state (git)
+runs() {
+    local label="$1" cmd="$2"
+    (( _seq++ ))
+    _run_one "$label" "$cmd" "$_seq"
+}
+
 skip() {
-    local label="$1"
-    local reason="$2"
-    ((TOTAL++))
-    printf "  SKIP  %-22s (%s)\n" "$label" "$reason"
-    ((SKIP++))
+    local label="$1" reason="$2"
+    (( _seq++ ))
+    local seq=$_seq
+    printf 'SKIP %s\x00%s\n' "$label" "$reason" > "$RESULTSDIR/${seq}.res"
+    printf '%s' "$label" > "$RESULTSDIR/${seq}.label"
+}
+
+# Wait for all background jobs, then print results in insertion order
+print_results() {
+    local section=""
+    # Wait for every background job to finish
+    for pid in "${_pids[@]}"; do
+        wait "$pid" 2>/dev/null
+    done
+
+    local pass=0 fail=0 skip=0 total=0
+    local i kind rest
+    for (( i = 1; i <= _seq; i++ )); do
+        local resfile="$RESULTSDIR/${i}.res"
+        [[ ! -f "$resfile" ]] && continue
+        IFS= read -r kind rest < "$resfile"
+        rest="${kind#* }"
+        kind="${kind%% *}"
+        case "$kind" in
+            SECTION)
+                printf "\n-- %s --\n" "$rest"
+                ;;
+            PASS)
+                (( total++ ))
+                printf "  PASS  %-28s\n" "$rest"
+                (( pass++ ))
+                ;;
+            FAIL)
+                (( total++ ))
+                local lbl rc snippet
+                lbl="${rest%%$'\x00'*}"
+                rest="${rest#*$'\x00'}"
+                rc="${rest%%$'\x00'*}"
+                snippet="${rest#*$'\x00'}"
+                printf "  FAIL  %-28s (exit %s)\n" "$lbl" "$rc"
+                [[ -n "$snippet" ]] && printf '%s\n' "$snippet"
+                (( fail++ ))
+                ;;
+            SKIP)
+                (( total++ ))
+                local _lbl="${rest%%$'\x00'*}"
+                local _reason="${rest#*$'\x00'}"
+                printf "  SKIP  %-28s (%s)\n" "$_lbl" "$_reason"
+                (( skip++ ))
+                ;;
+        esac
+    done
+
+    echo ""
+    echo "================================================"
+    printf "  %d total   %d passed   %d failed   %d skipped\n" \
+        "$total" "$pass" "$fail" "$skip"
+    echo "================================================"
+    echo "Sandbox will be removed: $SANDBOX"
+    [[ $fail -eq 0 ]]
+}
+
+# Write a section header into the results stream so it prints in order
+section() {
+    (( _seq++ ))
+    printf 'SECTION %s\n' "$1" > "$RESULTSDIR/${_seq}.res"
 }
 
 #########################################################################
 # 1. NAVIGATION & FILES
 #########################################################################
-echo "-- Navigation & Files --"
+section "Navigation & Files"
 run  "mkcd"        "mkcd newdir_mkcd && [ \"\$(basename \$PWD)\" = newdir_mkcd ]"
 run  "up"          "mkdir -p ud1/ud2 && cd ud1/ud2 && up 1 && [ \"\$(basename \$PWD)\" = ud1 ]"
 run  "lsd"         "lsd"
 run  "fcd"         "fcd"
 run  "ftext"       "ftext"
 run  "permsof"     "permsof file1.txt"
+run  "treelist"    "treelist ."
+run  "treelist(depth)" "treelist . 2"
+run  "recent"      "recent 5"
+run  "swap"        "echo a > swapA && echo b > swapB && swap swapA swapB && grep -q b swapA && grep -q a swapB"
+run  "trash"       "echo trashme > trashtest.txt && trash trashtest.txt && [ ! -e trashtest.txt ]"
 if [[ $HAS_TAR -eq 1 ]]; then
     run "extract"    "tar czf t.tar.gz file1.txt && mkdir xd && cd xd && extract ../t.tar.gz"
     run "compress"   "compress out.tar.gz file1.txt"
@@ -342,27 +505,33 @@ fi
 #########################################################################
 # 2. GIT
 #########################################################################
-echo "-- Git --"
-run  "gitundo"          "git commit --allow-empty -q -m tmp && gitundo"
-run  "branchclean"      "branchclean"
-run  "branchage"        "branchage"
-run  "gitlog-today"     "gitlog-today"
-run  "gacp"              "git checkout -q feature/test-branch && echo more >> file1.txt && gacp 'test commit via gacp'"
-run  "gclone"            "cd .. && rm -rf clone-test && gclone '$REMOTE_REPO' clone-test"
-run  "gwip"               "echo wipchange >> file1.txt && gwip"
-run  "gunwip"             "gunwip"
-run  "gitprune"           "gitprune"
-run  "gswitch"            "gswitch"
-run  "prdiff"             "git checkout -q main 2>/dev/null; prdiff"
-run  "gitcontributors"    "gitcontributors"
-run  "gitsize"            "gitsize"
-run  "gitconflicts"       "gitconflicts"
-run  "gitignore"          "gitignore go,macos"
+section "Git"
+runs  "gitundo"          "git commit --allow-empty -q -m tmp && gitundo"
+runs  "branchclean"      "branchclean"
+runs  "branchage"        "branchage"
+runs  "gitlog-today"     "gitlog-today"
+runs  "gacp"              "git checkout -q feature/test-branch && echo more >> file1.txt && gacp 'test commit via gacp'"
+runs  "gclone"            "cd .. && rm -rf clone-test && gclone '$REMOTE_REPO' clone-test"
+runs  "gwip"               "echo wipchange >> file1.txt && gwip"
+runs  "gunwip"             "gunwip"
+runs  "gitprune"           "gitprune"
+runs  "gswitch"            "gswitch"
+runs  "prdiff"             "git checkout -q main 2>/dev/null; prdiff"
+runs  "gitcontributors"    "gitcontributors"
+runs  "gitsize"            "gitsize"
+runs  "gitconflicts"       "gitconflicts"
+runs  "gitignore"          "gitignore go,macos"
+runs  "gstash"             "echo wipstash >> file1.txt && git add -A && git stash && gstash"
+runs  "grebase"            "grebase 1"
+runs  "gopen"              "gopen"
+runs  "gitbranch-rename"   "git checkout -q main && git checkout -q -b rename-old && gitbranch-rename rename-old rename-new && git checkout -q main"
+runs  "gitlog-graph"       "gitlog-graph"
+runs  "gcleanup"           "gcleanup"
 
 #########################################################################
 # 3. DOCKER & KUBERNETES (docker/kubectl fully mocked — no real daemon touched)
 #########################################################################
-echo "-- Docker & Kubernetes --"
+section "Docker & Kubernetes"
 run  "dockernuke"          "dockernuke mockcontainer"
 run  "dockerclean-images"  "dockerclean-images"
 run  "dclean"              "dclean"
@@ -374,11 +543,17 @@ run  "klogs"                "klogs"
 run  "kexec"                "kexec"
 run  "ktop"                 "ktop"
 run  "kevents"              "kevents"
+run  "denv"                 "denv mockcontainer"
+run  "dbuild"               "dbuild mytestimage"
+run  "dbuild(auto-tag)"     "dbuild"
+run  "kns"                  "kns mock-ns"
+run  "kdesc"                "kdesc"
+run  "kport"                "kport 8080 mock-pod 80"
 
 #########################################################################
 # 4. GO (go binary fully mocked — no real build/test runs)
 #########################################################################
-echo "-- Go --"
+section "Go"
 run  "covreport"   "covreport"
 run  "gomodwhy"    "gomodwhy example.com/mockmod"
 run  "goclean"     "goclean"
@@ -396,10 +571,10 @@ fi
 #########################################################################
 # 5. NODE / NPM (npm binary fully mocked)
 #########################################################################
-echo "-- Node/npm --"
+section "Node/npm"
 run  "npmclean"     "npmclean"
 if [[ $HAS_JQ -eq 1 ]]; then
-    run "npmscripts" "npmscripts"
+    run "npmscripts" "echo '{\"name\":\"m\",\"scripts\":{\"test\":\"echo t\"}}' > package.json && npmscripts"
 else
     skip "npmscripts" "jq not found"
 fi
@@ -409,7 +584,7 @@ run  "npmsize"      "mkdir -p node_modules && npmsize"
 #########################################################################
 # 6. PYTHON
 #########################################################################
-echo "-- Python --"
+section "Python"
 if [[ $HAS_PY -eq 1 ]]; then
     run "venvcreate" "rm -rf venv && venvcreate"
 else
@@ -425,7 +600,7 @@ fi
 #########################################################################
 # 7. NETWORKING & APIs (curl/dns/openssl s_client all mocked — no real network)
 #########################################################################
-echo "-- Networking --"
+section "Networking"
 run  "myip"         "myip"
 run  "localip"      "localip"
 run  "killport"     "killport 65533"
@@ -438,11 +613,17 @@ run  "flushdns"     "flushdns"
 run  "weather"      "weather london"
 run  "tcpcheck"     "tcpcheck 127.0.0.1 65533"
 run  "shorten"      "shorten https://example.com"
+run  "pingcheck"    "pingcheck example.com"
+run  "sshconfig"    "sshconfig"
+run  "headers"      "headers https://example.com"
+run  "proxy(on)"    "proxy on http://proxy.local:3128"
+run  "proxy(off)"   "proxy on http://p:1 && proxy off"
+run  "proxy(status)" "proxy status"
 
 #########################################################################
 # 8. SECURITY & ENCODING
 #########################################################################
-echo "-- Security & Encoding --"
+section "Security & Encoding"
 run  "passgen"    "passgen"
 run  "pubkey"     "pubkey"
 run  "genssh"     "genssh testkey mock@sharmory"
@@ -457,29 +638,37 @@ else
 fi
 run  "hashfile"   "hashfile file1.txt"
 run  "genuuid"    "genuuid"
+run  "jwtdecode"  "jwtdecode '$MOCK_JWT'"
+run  "dotenv-check(clean)" "printf 'APP_ENV=dev\nLOG_LEVEL=info\n' > /tmp/sharmory-env-clean && dotenv-check /tmp/sharmory-env-clean; rm -f /tmp/sharmory-env-clean"
+run  "dotenv-check(bad)"   "printf 'EMPTY=\nSECRET_TOKEN=plain\nFOO=has spaces\n' > /tmp/sharmory-env-bad && dotenv-check /tmp/sharmory-env-bad; ret=\$?; rm -f /tmp/sharmory-env-bad; [ \$ret -ne 0 ]"
 
 #########################################################################
 # 9. SYSTEM & PROCESS (kill is mocked — nothing is ever really signaled)
 #########################################################################
-echo "-- System & Process --"
+section "System & Process"
 run  "mem"      "mem"
 run  "cpu"      "cpu"
 run  "pidtree"  "pidtree \$\$"
 run  "fkill"    "fkill"
 run  "now"      "now"
 run  "timer"    "timer 1 TestTimer"
+run  "diskusage"   "diskusage ."
+run  "envdiff"       "printf 'A=1\n' > /tmp/ea && printf 'A=2\nB=3\n' > /tmp/eb && envdiff /tmp/ea /tmp/eb; rm -f /tmp/ea /tmp/eb"
+run  "envdiff(same)" "printf 'A=1\n' > /tmp/ec && envdiff /tmp/ec /tmp/ec; rm -f /tmp/ec"
+run  "ports"       "ports"
+run  "sysinfo"     "sysinfo"
 
 #########################################################################
 # 10. PRODUCTIVITY & MISC
 #########################################################################
-echo "-- Productivity --"
+section "Productivity"
 run  "note"      "note 'test note from sharmory tests'"
 if [[ $HAS_JQ -eq 1 ]]; then
-    run "jsonpp" "jsonpp sample.json"
+    run "jsonpp" "echo '{\"k\":1}' > /tmp/sharmory-test.json && jsonpp /tmp/sharmory-test.json; rm -f /tmp/sharmory-test.json"
 else
     skip "jsonpp" "jq not found"
 fi
-run  "envload"       "envload .env"
+run  "envload"       "printf 'FOO=bar\nBAZ=qux\n' > /tmp/sharmory-test.env && envload /tmp/sharmory-test.env; rm -f /tmp/sharmory-test.env"
 run  "ffind (name)"  "ffind -f file1"
 run  "ffind (text)"  "ffind hello"
 run  "cheat"         "cheat ls"
@@ -489,11 +678,27 @@ else
     skip "calc" "python3 not found"
 fi
 run  "qr"    "qr hello"
+run  "todo(add)"   "todo 'buy groceries'"
+run  "todo(list)"  "todo"
+run  "mkproject(bare)"   "cd /tmp && rm -rf sharmory-bare-test && mkproject sharmory-bare-test bare && [ -f /tmp/sharmory-bare-test/README.md ]; ret=\$?; rm -rf /tmp/sharmory-bare-test; exit \$ret"
+run  "mkproject(node)"   "cd /tmp && rm -rf sharmory-node-test && mkproject sharmory-node-test node && [ -f /tmp/sharmory-node-test/package.json ]; ret=\$?; rm -rf /tmp/sharmory-node-test; exit \$ret"
+run  "mkproject(python)" "cd /tmp && rm -rf sharmory-py-test && mkproject sharmory-py-test python && [ -f /tmp/sharmory-py-test/main.py ]; ret=\$?; rm -rf /tmp/sharmory-py-test; exit \$ret"
+run  "epoch(now)"    "epoch"
+run  "epoch(from-ts)" "epoch 0"
+if [[ $HAS_JQ -eq 1 ]]; then
+    run  "diffjson"       "echo '{\"a\":1}' > /tmp/ja && echo '{\"a\":2}' > /tmp/jb && diffjson /tmp/ja /tmp/jb; ret=\$?; rm -f /tmp/ja /tmp/jb; [ \$ret -ne 0 ]"
+    run  "diffjson(same)" "echo '{\"a\":1}' > /tmp/jc && diffjson /tmp/jc /tmp/jc; rm -f /tmp/jc"
+else
+    skip "diffjson"       "jq not found"
+    skip "diffjson(same)" "jq not found"
+fi
+run  "retry(pass)"   "retry 3 true"
+run  "retry(fail)"   "retry 2 false; [ \$? -ne 0 ]"
 
 #########################################################################
 # 11. CI / JENKINS (curl mocked — no real Jenkins server contacted)
 #########################################################################
-echo "-- CI/Jenkins --"
+section "CI/Jenkins"
 if [[ $HAS_JQ -eq 1 ]]; then
     run "jenk-crumb" "jenk-crumb"
     run "jenk-jobs"  "jenk-jobs"
@@ -507,16 +712,10 @@ run  "jenk-logs"   "jenk-logs mock-job"
 #########################################################################
 # 12. SHARMORY MANAGEMENT
 #########################################################################
-echo "-- Sharmory Management --"
+section "Sharmory Management"
 run  "sharmory-update" "sharmory-update"
 
 #########################################################################
-# SUMMARY
+# SUMMARY — wait for all parallel jobs, then print in order
 #########################################################################
-echo ""
-echo "================================================"
-printf "  %d total   %d passed   %d failed   %d skipped\n" "$TOTAL" "$PASS" "$FAIL" "$SKIP"
-echo "================================================"
-echo "Sandbox will be removed: $SANDBOX"
-
-[[ $FAIL -eq 0 ]] && exit 0 || exit 1
+print_results

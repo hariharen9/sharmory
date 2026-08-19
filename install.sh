@@ -25,8 +25,8 @@ if [ ! -f "$RC_FILE" ]; then
 fi
 
 # Append to .zshrc if not already present
-SOURCE_LINE="source ~/.sharmory/functions.zsh"
-if grep -Fxq "$SOURCE_LINE" "$RC_FILE" 2>/dev/null; then
+SOURCE_LINE='[[ -f ~/.sharmory/functions.zsh ]] && source ~/.sharmory/functions.zsh'
+if grep -Fq "sharmory/functions.zsh" "$RC_FILE" 2>/dev/null; then
     echo "ℹ️  Sharmory is already configured in $RC_FILE"
 else
     printf "\n# Sharmory — Dev shell toolkit\n%s\n" "$SOURCE_LINE" >> "$RC_FILE"

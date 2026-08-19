@@ -2,7 +2,10 @@
 #
 # Sharmory — a collection of dev-focused zsh functions
 # Source this file from your .zshrc:
-#   source /path/to/functions.zsh
+#   [[ -f ~/.sharmory/functions.zsh ]] && source ~/.sharmory/functions.zsh
+#
+# The guard above ensures that if this file has any load-time error,
+# it never aborts .zshrc mid-execution (protecting your PATH and plugins).
 #
 # Optional dependencies used by some functions (all fail gracefully if missing):
 #   fzf, jq, eza, gh, tldr, entr/fswatch, httpie, ncdu
@@ -12,27 +15,34 @@
 #########################################################################
 
 # Silently unalias any name Sharmory defines as a function.
+# Single unalias -- call with all names: one fork instead of 40+.
 # This prevents "defining function based on alias" parse errors when a plugin
 # manager (oh-my-zsh, Prezto, etc.) has already claimed one of our names.
-# The 2>/dev/null || true makes it a no-op when no such alias exists.
-unalias \
+unalias -- \
     mkcd up lsd fcd ftext permsof extract compress duh sizeof findbig \
     emptydirs dupfind bak cwd clipcopy watchrun \
+    treelist recent swap trash \
     gitundo branchclean branchage gitlog-today gacp gclone gwip gunwip \
     gitprune gswitch prdiff gitcontributors gitsize gitconflicts gitignore \
+    gstash grebase gopen gitbranch-rename gitlog-graph gcleanup \
     dockernuke dockerclean-images dclean dockerlogs dsh dockersizes \
     k8sctx klogs kexec ktop kevents \
+    denv dbuild kns kdesc kport \
     covreport gomodwhy goclean goupdate gobench gonew gowatch \
     npmclean npmscripts npmoutdated npmsize \
     venvcreate pyclean pyfreeze \
     myip localip killport portwho certcheck dnscheck httpstatus apihit \
     flushdns weather tcpcheck shorten \
+    pingcheck sshconfig headers proxy \
     passgen pubkey genssh b64e b64d urlencode urldecode hashfile genuuid \
+    jwtdecode dotenv-check \
     mem cpu pidtree fkill now timer \
+    diskusage envdiff ports sysinfo \
     note jsonpp envload ffind cheat calc qr \
+    todo mkproject epoch diffjson retry \
     jenk-crumb jenk-build jenk-logs jenk-jobs \
     sharmory-update \
-    2>/dev/null || true
+    2>/dev/null; true
 
 # Detect OS once so functions can branch cheaply
 _sharmory_os() {
@@ -303,6 +313,88 @@ watchrun() {
     fi
 }
 
+# Recursive tree listing; uses `tree` if installed, else pretty-prints via find
+# Usage: treelist [dir] [depth]
+treelist() {
+    local dir=${1:-.}
+    local depth=${2:-}
+    if command -v tree &>/dev/null; then
+        if [[ -n "$depth" ]]; then
+            tree -L "$depth" --dirsfirst -C "$dir"
+        else
+            tree --dirsfirst -C "$dir"
+        fi
+    else
+        # Pure Zsh fallback — no external tools needed
+        local base_depth=$(( ${#${dir%%/}//[^\/]} ))
+        find "$dir" -not -path '*/.git*' 2>/dev/null | sort | while IFS= read -r p; do
+            local depth=$(( ${#${p//[^\/]/}} - base_depth ))
+            local pad=${(l:$(( depth * 4 )):: :)}
+            print "${pad}${p:t}"
+        done
+    fi
+}
+
+# Show the N most recently modified files in the current directory tree
+# Usage: recent [n]
+recent() {
+    local n=${1:-10}
+    find . -type f -not -path '*/.git*' -printf '%T@ %p\n' 2>/dev/null \
+        | sort -rn \
+        | head -n "$n" \
+        | awk '{print $2}' \
+    || find . -type f -not -path '*/.git*' 2>/dev/null \
+        | xargs stat -f '%m %N' 2>/dev/null \
+        | sort -rn | head -n "$n" | awk '{print $2}'
+}
+
+# Atomically swap two filenames using a temp file
+# Usage: swap <file-a> <file-b>
+swap() {
+    if [[ -z "$1" || -z "$2" ]]; then
+        echo "Usage: swap <file-a> <file-b>"
+        return 1
+    fi
+    if [[ ! -e "$1" ]]; then echo "Not found: $1"; return 1; fi
+    if [[ ! -e "$2" ]]; then echo "Not found: $2"; return 1; fi
+    local tmp
+    tmp=$(mktemp "${1}.XXXXXXXX.swaptmp")
+    mv -- "$1" "$tmp"
+    mv -- "$2" "$1"
+    mv -- "$tmp" "$2"
+    echo "Swapped: $1 ↔ $2"
+}
+
+# Move a file to the system trash instead of deleting it permanently
+# Usage: trash <file-or-dir>
+trash() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: trash <file-or-dir>"
+        return 1
+    fi
+    if [[ ! -e "$1" ]]; then
+        echo "Not found: $1"
+        return 1
+    fi
+    local os
+    os=$(_sharmory_os)
+    if [[ "$os" == "macos" ]]; then
+        local trash_dir="$HOME/.Trash"
+        mkdir -p "$trash_dir"
+        local dest="$trash_dir/$(basename "$1")"
+        # Avoid collisions in the Trash by appending a timestamp if needed
+        [[ -e "$dest" ]] && dest="${dest}.$(date +%s)"
+        mv -- "$1" "$dest"
+    else
+        local trash_dir="${XDG_DATA_HOME:-$HOME/.local/share}/Trash/files"
+        mkdir -p "$trash_dir"
+        local dest="$trash_dir/$(basename "$1")"
+        [[ -e "$dest" ]] && dest="${dest}.$(date +%s)"
+        mv -- "$1" "$dest"
+    fi
+    echo "Trashed: $1"
+}
+
 #########################################################################
 # 2. GIT
 #########################################################################
@@ -433,6 +525,96 @@ gitignore() {
     echo "Appended $1 templates to .gitignore"
 }
 
+# Interactive git stash picker — pop, apply, or drop a stash entry via fzf
+gstash() {
+    _sharmory_need fzf || return 1
+    local entry action
+    entry=$(git stash list | fzf --prompt="stash> " --preview='git stash show -p {1}')
+    [[ -z "$entry" ]] && return 0
+    local stash_ref
+    stash_ref=$(echo "$entry" | cut -d: -f1)
+    echo "Action for $stash_ref — (p)op  (a)pply  (d)rop  [p/a/d]:"
+    read -r action
+    case "$action" in
+        p) git stash pop "$stash_ref"   ;;
+        a) git stash apply "$stash_ref" ;;
+        d) git stash drop "$stash_ref"  ;;
+        *) echo "Aborted." ;;
+    esac
+}
+
+# Interactive rebase — pick how many commits to rebase interactively
+# Usage: grebase [n]   (omit n to pick via prompt)
+grebase() {
+    local n=$1
+    if [[ -z "$n" ]]; then
+        echo "How many commits back do you want to rebase?"
+        read -r n
+    fi
+    if ! [[ "$n" =~ ^[0-9]+$ ]]; then
+        echo "Expected a positive integer, got: $n"
+        return 1
+    fi
+    git rebase -i "HEAD~$n"
+}
+
+# Open the current repo's GitHub/GitLab/Bitbucket URL in the browser
+gopen() {
+    local remote
+    remote=$(git remote get-url origin 2>/dev/null)
+    if [[ -z "$remote" ]]; then
+        echo "No 'origin' remote found."
+        return 1
+    fi
+    # Normalise SSH → HTTPS: git@github.com:user/repo.git → https://github.com/user/repo
+    local url
+    if [[ "$remote" == git@* ]]; then
+        url=$(echo "$remote" | sed -E 's|git@([^:]+):(.+)(\.git)?$|https://\1/\2|')
+    else
+        url="${remote%.git}"
+    fi
+    echo "Opening: $url"
+    if command -v open &>/dev/null; then
+        open "$url"
+    elif command -v xdg-open &>/dev/null; then
+        xdg-open "$url"
+    else
+        echo "$url"
+    fi
+}
+
+# Rename a git branch locally and on the remote, updating tracking refs
+# Usage: gitbranch-rename <old-name> <new-name>
+gitbranch-rename() {
+    if [[ -z "$1" || -z "$2" ]]; then
+        echo "Usage: gitbranch-rename <old-name> <new-name>"
+        return 1
+    fi
+    local old=$1 new=$2
+    git branch -m "$old" "$new"
+    git push origin --delete "$old" 2>/dev/null && echo "Deleted remote '$old'"
+    git push origin -u "$new"
+    echo "Renamed '$old' → '$new' locally and on remote."
+}
+
+# Pretty one-line graph log for the whole repo
+gitlog-graph() {
+    git log --graph --oneline --decorate --all --color "$@"
+}
+
+# Combined cleanup: prune remote-tracking refs, delete merged branches, tidy Go module
+gcleanup() {
+    echo "==> gitprune"
+    gitprune
+    echo "==> branchclean"
+    branchclean
+    if [[ -f go.mod ]]; then
+        echo "==> goclean"
+        goclean
+    fi
+    echo "Done."
+}
+
 #########################################################################
 # 3. DOCKER & KUBERNETES
 #########################################################################
@@ -531,6 +713,55 @@ ktop() {
 # Describe events for the current namespace, most recent last
 kevents() {
     kubectl get events --sort-by='.lastTimestamp'
+}
+
+# Print all environment variables of a running container
+# Usage: denv <container-name-or-id>
+denv() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: denv <container-name-or-id>"
+        return 1
+    fi
+    docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' "$1"
+}
+
+# Build a Docker image; auto-derives the tag from the current directory name
+# Usage: dbuild [tag]
+dbuild() {
+    local tag=${1:-$(basename "$PWD")}
+    echo "Building image: $tag"
+    docker build -t "$tag" .
+}
+
+# Quickly switch the current kubectl namespace without changing context
+# Usage: kns <namespace>
+kns() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: kns <namespace>"
+        return 1
+    fi
+    kubectl config set-context --current --namespace="$1"
+    echo "Namespace set to: $1"
+}
+
+# Interactively pick a pod via fzf and run kubectl describe on it
+kdesc() {
+    _sharmory_need fzf || return 1
+    local pod
+    pod=$(kubectl get pods -o name | fzf --prompt="describe pod> " | sed 's|pod/||')
+    [[ -z "$pod" ]] && return 0
+    kubectl describe pod "$pod"
+}
+
+# Forward a local port to a port on a pod
+# Usage: kport <local-port> <pod-name> <remote-port>
+kport() {
+    if [[ -z "$1" || -z "$2" || -z "$3" ]]; then
+        echo "Usage: kport <local-port> <pod-name> <remote-port>"
+        return 1
+    fi
+    echo "Forwarding localhost:$1 → pod/$2:$3 (Ctrl-C to stop)"
+    kubectl port-forward "pod/$2" "$1:$3"
 }
 
 #########################################################################
@@ -653,6 +884,7 @@ pyfreeze() {
 #########################################################################
 # 7. NETWORKING & APIs
 #########################################################################
+
 
 # Print your public-facing IP address
 myip() {
@@ -812,6 +1044,92 @@ shorten() {
     echo
 }
 
+# Send 5 pings to a host and print a clean summary of RTT and packet loss
+# Usage: pingcheck <host>
+pingcheck() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: pingcheck <host>"
+        return 1
+    fi
+    local host=$1
+    echo "Pinging $host (5 packets)..."
+    local os
+    os=$(_sharmory_os)
+    if [[ "$os" == "macos" ]]; then
+        ping -c 5 "$host"
+    else
+        ping -c 5 -W 2 "$host"
+    fi
+}
+
+# List all Host entries from ~/.ssh/config
+sshconfig() {
+    local cfg="$HOME/.ssh/config"
+    if [[ ! -f "$cfg" ]]; then
+        echo "No ~/.ssh/config found."
+        return 1
+    fi
+    awk '/^[Hh]ost /{
+        host=$2
+        alias=""
+        hostname=""
+        user=""
+        port=""
+    }
+    /^[[:space:]]+HostName /{hostname=$2}
+    /^[[:space:]]+User /{user=$2}
+    /^[[:space:]]+Port /{port=$2}
+    /^[[:space:]]+IdentityFile /{alias=$2}
+    /^[Hh]ost /{
+        if (host && hostname)
+            printf "  %-20s → %s%s%s\n", host, (user?user"@":""), hostname, (port?":"port:"")
+    }
+    END {
+        if (host && hostname)
+            printf "  %-20s → %s%s%s\n", host, (user?user"@":""), hostname, (port?":"port:"")
+    }' "$cfg"
+}
+
+# Show full HTTP response headers for a URL
+# Usage: headers <url>
+headers() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: headers <url>"
+        return 1
+    fi
+    curl -sI "$1"
+}
+
+# Toggle http_proxy / https_proxy / no_proxy env vars on/off
+# Usage: proxy on [host:port]  |  proxy off  |  proxy status
+proxy() {
+    local action=${1:-status}
+    case "$action" in
+        on)
+            local addr=${2:-"http://127.0.0.1:8080"}
+            export http_proxy="$addr"
+            export https_proxy="$addr"
+            export HTTP_PROXY="$addr"
+            export HTTPS_PROXY="$addr"
+            export no_proxy="localhost,127.0.0.1,::1"
+            export NO_PROXY="$no_proxy"
+            echo "Proxy ON → $addr"
+            ;;
+        off)
+            unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
+            echo "Proxy OFF."
+            ;;
+        status)
+            echo "http_proxy  = ${http_proxy:-<not set>}"
+            echo "https_proxy = ${https_proxy:-<not set>}"
+            ;;
+        *)
+            echo "Usage: proxy <on [host:port]|off|status>"
+            return 1
+            ;;
+    esac
+}
+
 #########################################################################
 # 8. SECURITY & ENCODING
 #########################################################################
@@ -869,6 +1187,104 @@ genuuid() {
         uuidgen
     else
         python3 -c "import uuid; print(uuid.uuid4())"
+    fi
+}
+
+# Decode a JWT token's header and payload and pretty-print as JSON (no signature verification)
+# Usage: jwtdecode <token>
+jwtdecode() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: jwtdecode <token>"
+        return 1
+    fi
+    local token=$1
+    local header payload
+    header=$(echo "$token"  | cut -d. -f1)
+    payload=$(echo "$token" | cut -d. -f2)
+
+    # JWT uses base64url (- and _ instead of + and /); pad to a multiple of 4
+    _jwt_decode_part() {
+        local part=$1
+        # base64url → base64
+        part=$(echo "$part" | tr '_-' '/+')
+        # add padding
+        local pad=$(( 4 - ${#part} % 4 ))
+        [[ $pad -ne 4 ]] && part="${part}$(printf '%0.s=' $(seq 1 $pad))"
+        echo "$part" | base64 -d 2>/dev/null
+    }
+
+    echo "=== Header ==="
+    if command -v jq &>/dev/null; then
+        _jwt_decode_part "$header"  | jq .
+        echo "=== Payload ==="
+        _jwt_decode_part "$payload" | jq .
+    else
+        _jwt_decode_part "$header"
+        echo "=== Payload ==="
+        _jwt_decode_part "$payload"
+    fi
+}
+
+# Lint a .env file: flag empty values, missing quotes on values with spaces,
+# duplicate keys, and keys whose names suggest they might be secrets but are unquoted
+# Usage: dotenv-check [file]
+dotenv-check() {
+    local file=${1:-.env}
+    if [[ ! -f "$file" ]]; then
+        echo "No such file: $file"
+        return 1
+    fi
+    local issues=0
+    local -A seen_keys
+    local lineno=0
+    while IFS= read -r line; do
+        (( lineno++ ))
+        # skip blanks and comments
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        # must match KEY=value pattern
+        if ! [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+            printf "  [WARN] line %d: not a valid KEY=value pair: %s\n" "$lineno" "$line"
+            (( issues++ ))
+            continue
+        fi
+        local key value
+        key=${line%%=*}
+        value=${line#*=}
+
+        # duplicate key
+        if [[ -n "${seen_keys[$key]+_}" ]]; then
+            printf "  [DUPE] line %d: duplicate key '%s'\n" "$lineno" "$key"
+            (( issues++ ))
+        fi
+        seen_keys[$key]=1
+
+        # empty value
+        if [[ -z "$value" ]]; then
+            printf "  [EMPTY] line %d: '%s' has no value\n" "$lineno" "$key"
+            (( issues++ ))
+            continue
+        fi
+
+        # value has unquoted whitespace
+        if [[ "$value" != \"*\" && "$value" != \'*\' && "$value" == *[[:space:]]* ]]; then
+            printf "  [QUOTE] line %d: '%s' value contains spaces but is not quoted\n" "$lineno" "$key"
+            (( issues++ ))
+        fi
+
+        # secret-ish key with plaintext value (not redacted/placeholder)
+        if [[ "$key" =~ (SECRET|PASSWORD|PASSWD|TOKEN|API_KEY|APIKEY|PRIVATE_KEY|AUTH) ]]; then
+            if [[ "$value" != \"*\" && "$value" != \'*\' && "$value" != \$\{*\} ]]; then
+                printf "  [SECRET] line %d: '%s' looks like a secret — consider quoting or using a vault\n" "$lineno" "$key"
+                (( issues++ ))
+            fi
+        fi
+    done < "$file"
+
+    if [[ $issues -eq 0 ]]; then
+        echo "  ✅ $file looks clean (no issues found)."
+    else
+        printf "  ⚠️  %d issue(s) found in %s\n" "$issues" "$file"
+        return 1
     fi
 }
 
@@ -940,6 +1356,127 @@ timer() {
     echo -e "\a"
 }
 
+# Show disk usage interactively via ncdu, fallback to a df + du summary
+diskusage() {
+    if command -v ncdu &>/dev/null; then
+        ncdu "${1:-.}"
+    else
+        echo "=== Filesystem usage ==="
+        df -h
+        echo ""
+        echo "=== Largest directories under ${1:-.} ==="
+        du -sh "${1:-.}"/*/ 2>/dev/null | sort -rh | head -20
+    fi
+}
+
+# Diff two .env files: show added, removed, and changed key=value pairs
+# Usage: envdiff <file1> <file2>
+envdiff() {
+    if [[ -z "$1" || -z "$2" ]]; then
+        echo "Usage: envdiff <file1> <file2>"
+        return 1
+    fi
+    if [[ ! -f "$1" ]]; then echo "Not found: $1"; return 1; fi
+    if [[ ! -f "$2" ]]; then echo "Not found: $2"; return 1; fi
+
+    # Parse KEY=value into associative arrays
+    local -A a b
+    while IFS= read -r line; do
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+        a[${line%%=*}]="${line#*=}"
+    done < "$1"
+    while IFS= read -r line; do
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+        b[${line%%=*}]="${line#*=}"
+    done < "$2"
+
+    local changed=0
+    # Keys removed in file2
+    for k in "${(@k)a}"; do
+        if [[ -z "${b[$k]+_}" ]]; then
+            printf "  \033[31m- %s=%s\033[0m\n" "$k" "${a[$k]}"
+            (( changed++ ))
+        elif [[ "${a[$k]}" != "${b[$k]}" ]]; then
+            printf "  \033[33m~ %s: %s → %s\033[0m\n" "$k" "${a[$k]}" "${b[$k]}"
+            (( changed++ ))
+        fi
+    done
+    # Keys added in file2
+    for k in "${(@k)b}"; do
+        if [[ -z "${a[$k]+_}" ]]; then
+            printf "  \033[32m+ %s=%s\033[0m\n" "$k" "${b[$k]}"
+            (( changed++ ))
+        fi
+    done
+
+    if [[ $changed -eq 0 ]]; then
+        echo "  No differences found."
+    else
+        printf "  %d difference(s) between %s and %s\n" "$changed" "$1" "$2"
+    fi
+}
+
+# List all listening TCP/UDP ports with the owning process name and PID
+ports() {
+    local os
+    os=$(_sharmory_os)
+    if [[ "$os" == "macos" ]]; then
+        printf "%-8s %-10s %-25s %s\n" "Proto" "Port" "Process" "PID"
+        printf "%-8s %-10s %-25s %s\n" "-----" "----" "-------" "---"
+        lsof -iTCP -iUDP -sTCP:LISTEN -P -n 2>/dev/null | awk 'NR>1 {
+            split($9,a,":")
+            printf "%-8s %-10s %-25s %s\n", $8, a[length(a)], $1, $2
+        }'
+    else
+        ss -tulnp 2>/dev/null | awk 'NR>1 {
+            split($5,a,":")
+            split($7,p,"\"")
+            printf "%-8s %-10s %-25s\n", $1, a[length(a)], (p[2]?p[2]:$7)
+        }' | sort -k2 -n
+    fi
+}
+
+# Print a single-screen system summary: OS, CPU, RAM, disk, uptime, load
+sysinfo() {
+    local os
+    os=$(_sharmory_os)
+    echo "╔═══════════════════════════════════════╗"
+    echo "║           System Information          ║"
+    echo "╚═══════════════════════════════════════╝"
+
+    if [[ "$os" == "macos" ]]; then
+        printf "  OS       : %s\n" "$(sw_vers -productName) $(sw_vers -productVersion)"
+        printf "  Kernel   : %s\n" "$(uname -r)"
+        printf "  CPU      : %s\n" "$(sysctl -n machdep.cpu.brand_string 2>/dev/null)"
+        printf "  Cores    : %s physical / %s logical\n" \
+            "$(sysctl -n hw.physicalcpu 2>/dev/null)" \
+            "$(sysctl -n hw.logicalcpu 2>/dev/null)"
+        local mem_bytes
+        mem_bytes=$(sysctl -n hw.memsize 2>/dev/null)
+        printf "  RAM      : %.1f GB total\n" "$(echo "scale=1; $mem_bytes/1073741824" | bc 2>/dev/null || echo '?')"
+        printf "  Uptime   : %s\n" "$(uptime | sed 's/.*up /up /' | cut -d, -f1-2)"
+        printf "  Load     : %s\n" "$(uptime | awk -F'load averages:' '{print $2}')"
+    else
+        printf "  OS       : %s\n" "$(uname -o 2>/dev/null || uname -s) $(uname -r)"
+        printf "  Distro   : %s\n" "$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')"
+        printf "  CPU      : %s\n" "$(grep 'model name' /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | xargs)"
+        printf "  Cores    : %s\n" "$(nproc 2>/dev/null)"
+        local mem_total mem_avail
+        mem_total=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}')
+        mem_avail=$(grep MemAvailable /proc/meminfo 2>/dev/null | awk '{print $2}')
+        printf "  RAM      : %s MB total / %s MB available\n" \
+            "$(( mem_total / 1024 ))" "$(( mem_avail / 1024 ))"
+        printf "  Uptime   : %s\n" "$(uptime -p 2>/dev/null || uptime)"
+        printf "  Load     : %s\n" "$(cat /proc/loadavg 2>/dev/null | awk '{print $1, $2, $3}')"
+    fi
+
+    echo ""
+    printf "  Disk usage:\n"
+    df -h 2>/dev/null | awk 'NR==1 || /\/$/ || /home/ {printf "    %s\n", $0}'
+}
+
 #########################################################################
 # 10. PRODUCTIVITY & MISC
 #########################################################################
@@ -1007,6 +1544,168 @@ ffind() {
             --exclude='*.png' --exclude='*.jpg' --exclude='*.jpeg' --exclude='*.gif' --exclude='*.pdf' \
             "$1" .
     fi
+}
+
+# Append a timestamped entry to ~/todo.md; run with no args to list all todos
+# Usage: todo [text]
+todo() {
+    local file="$HOME/todo.md"
+    if [[ -z "$1" ]]; then
+        if [[ -f "$file" ]]; then
+            cat "$file"
+        else
+            echo "No todo file yet. Run: todo <text>"
+        fi
+        return 0
+    fi
+    local dir
+    dir=$(dirname "$file")
+    mkdir -p "$dir"
+    [[ ! -f "$file" ]] && echo "# Todos\n" > "$file"
+    echo "- [ ] $(date +%Y-%m-%d\ %H:%M) $*" >> "$file"
+    echo "Added: $*"
+}
+
+# Scaffold a new project directory with README.md, .gitignore, and .env.example
+# Templates: go, node, python (default: bare)
+# Usage: mkproject <name> [template]
+mkproject() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: mkproject <name> [go|node|python]"
+        return 1
+    fi
+    local name=$1
+    local template=${2:-bare}
+    if [[ -d "$name" ]]; then
+        echo "Directory '$name' already exists."
+        return 1
+    fi
+    mkdir -p "$name"
+    cd "$name" || return 1
+
+    # README
+    printf "# %s\n\n> Add project description here.\n\n## Getting Started\n\n## License\n\nMIT\n" "$name" > README.md
+
+    # .env.example
+    printf "# Copy this file to .env and fill in your values\n\nAPP_ENV=development\nLOG_LEVEL=info\n" > .env.example
+
+    # template-specific setup
+    case "$template" in
+        go)
+            printf "*.out\n*.test\nvendor/\n" > .gitignore
+            printf "*.log\n.env\n" >> .gitignore
+            go mod init "$name" 2>/dev/null
+            cat > main.go <<'GOEOF'
+package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("Hello from ${name}!")
+}
+GOEOF
+            ;;
+        node)
+            printf "node_modules/\ndist/\n.env\n*.log\n" > .gitignore
+            cat > package.json <<PKGEOF
+{
+  "name": "${name}",
+  "version": "0.1.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  }
+}
+PKGEOF
+            printf "console.log('Hello from ${name}!');\n" > index.js
+            ;;
+        python)
+            printf "venv/\n__pycache__/\n*.pyc\n.env\n*.egg-info/\ndist/\nbuild/\n" > .gitignore
+            printf "# %s\n\nrequirements:\n" "$name" > requirements.txt
+            cat > main.py <<'PYEOF'
+def main():
+    print("Hello!")
+
+if __name__ == "__main__":
+    main()
+PYEOF
+            ;;
+        bare)
+            printf ".env\n*.log\n" > .gitignore
+            ;;
+        *)
+            echo "Unknown template '$template'. Using bare."
+            printf ".env\n*.log\n" > .gitignore
+            ;;
+    esac
+
+    git init -q
+    git add -A
+    git commit -q -m "Initial commit ($template)"
+    echo "✅ Project '$name' created with template '$template'"
+    echo "   $(pwd)"
+}
+
+# Convert between Unix epoch and human-readable datetime (both directions)
+# Usage: epoch          → prints current epoch and datetime
+#        epoch <epoch>  → epoch to human
+#        epoch <date>   → human to epoch  (e.g. "2024-01-15 12:00:00")
+epoch() {
+    if [[ -z "$1" ]]; then
+        local now
+        now=$(date +%s)
+        printf "Epoch   : %s\nHuman   : %s\n" "$now" "$(date -r "$now" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || date -d "@$now" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null)"
+        return 0
+    fi
+    # Detect if arg is all digits → epoch to human, else human to epoch
+    if [[ "$1" =~ ^[0-9]+$ ]]; then
+        date -r "$1" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || \
+        date -d "@$1" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null
+    else
+        date -j -f "%Y-%m-%d %H:%M:%S" "$1" "+%s" 2>/dev/null || \
+        date -d "$1" "+%s" 2>/dev/null
+    fi
+}
+
+# Semantically diff two JSON files by normalising with jq before diffing
+# Usage: diffjson <file-a> <file-b>
+diffjson() {
+    if [[ -z "$1" || -z "$2" ]]; then
+        echo "Usage: diffjson <file-a> <file-b>"
+        return 1
+    fi
+    _sharmory_need jq || return 1
+    if [[ ! -f "$1" ]]; then echo "Not found: $1"; return 1; fi
+    if [[ ! -f "$2" ]]; then echo "Not found: $2"; return 1; fi
+    diff <(jq -S . "$1") <(jq -S . "$2")
+}
+
+# Run a command up to N times, retrying on failure with exponential backoff
+# Usage: retry <max-attempts> <command> [args...]
+retry() {
+    if [[ -z "$1" || -z "$2" ]]; then
+        echo "Usage: retry <max-attempts> <command> [args...]"
+        return 1
+    fi
+    local max=$1
+    shift
+    local attempt=1
+    local wait=1
+    while true; do
+        if "$@"; then
+            [[ $attempt -gt 1 ]] && echo "✅ Succeeded on attempt $attempt."
+            return 0
+        fi
+        if (( attempt >= max )); then
+            printf "❌ Command failed after %d attempt(s): %s\n" "$max" "$*"
+            return 1
+        fi
+        printf "⚠️  Attempt %d/%d failed. Retrying in %ds...\n" "$attempt" "$max" "$wait"
+        sleep "$wait"
+        wait=$(( wait * 2 ))
+        (( attempt++ ))
+    done
 }
 
 # Look up a command's usage examples via tldr (falls back to `man`)
