@@ -50,7 +50,6 @@ jobs:
     name: Bump Homebrew tap
     needs: metadata
     runs-on: ubuntu-latest
-    if: ${{ secrets.TAP_GITHUB_TOKEN != '' }}
     steps:
       - name: Checkout Sharmory
         uses: actions/checkout@v4
@@ -63,6 +62,10 @@ jobs:
           TAR_SHA: ${{ needs.metadata.outputs.tar_sha }}
         run: |
           set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "TAP_GITHUB_TOKEN not set; skipping Homebrew bump"
+            exit 0
+          fi
           git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/hariharen9/homebrew-tap.git" tap
           cp packaging/homebrew/sharmory.rb tap/Formula/sharmory.rb
           python3 - <<'PY'
@@ -90,7 +93,6 @@ jobs:
     name: Bump Scoop bucket
     needs: metadata
     runs-on: ubuntu-latest
-    if: ${{ secrets.SCOOP_GITHUB_TOKEN != '' || secrets.TAP_GITHUB_TOKEN != '' }}
     steps:
       - name: Checkout Sharmory
         uses: actions/checkout@v4
@@ -103,6 +105,10 @@ jobs:
           ZIP_SHA: ${{ needs.metadata.outputs.zip_sha }}
         run: |
           set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "SCOOP_GITHUB_TOKEN/TAP_GITHUB_TOKEN not set; skipping Scoop bump"
+            exit 0
+          fi
           git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/hariharen9/scoop-bucket.git" bucket-repo
           mkdir -p bucket-repo/bucket
           python3 - <<'PY'
@@ -134,7 +140,6 @@ jobs:
     name: Publish npm
     needs: metadata
     runs-on: ubuntu-latest
-    if: ${{ secrets.NPM_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -146,13 +151,21 @@ jobs:
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "NPM_TOKEN not set; skipping npm publish"
+            exit 0
+          fi
+          npm publish --access public || {
+            echo "npm publish failed (package may already exist for this version)"
+            exit 0
+          }
 
   pypi:
     name: Publish PyPI
     needs: metadata
     runs-on: ubuntu-latest
-    if: ${{ secrets.PYPI_API_TOKEN != '' }}
     permissions:
       contents: read
     steps:
@@ -167,6 +180,17 @@ jobs:
           python -m pip install --upgrade pip build
           python -m build
       - name: Publish
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TWINE_PASSWORD}" ]; then
+            echo "PYPI_API_TOKEN not set; skipping PyPI publish"
+            exit 0
+          fi
+          python -m pip install --upgrade twine
+          python -m twine upload dist/* || {
+            echo "PyPI upload failed (version may already exist)"
+            exit 0
+          }

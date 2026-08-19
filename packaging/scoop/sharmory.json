@@ -4,7 +4,7 @@
     "homepage": "https://github.com/hariharen9/sharmory",
     "license": "MIT",
     "url": "https://github.com/hariharen9/sharmory/archive/refs/tags/v0.1.0.zip",
-    "hash": "sha256:e176e4cccc339bd186f932c200da1091533ed56edcc7a16be870d629cd06ff1d",
+    "hash": "sha256:88a9c77dbe8c8a886d22496df66bac5d50703f805d2fc4947609a135518d471f",
     "extract_dir": "sharmory-0.1.0",
     "notes": [
         "Sharmory is a sourced library, not a standalone binary.",
