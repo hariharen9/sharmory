@@ -9,7 +9,7 @@
     "notes": [
         "Sharmory is a sourced library, not a standalone binary.",
         "Add this line to your PowerShell profile ($PROFILE), using the Scoop app path:",
-        "    . "$HOME\\scoop\\apps\\sharmory\\current\\functions.ps1"",
+        "    . $HOME\\scoop\\apps\\sharmory\\current\\functions.ps1",
         "Then restart your shell or run: . $PROFILE"
     ]
 }
