@@ -65,6 +65,7 @@ function docker {
         "ps --format*"     { "mockid123`tmockcontainer`tmockimage" }
         "images -f*"       { }
         "images --format*" { "mockrepo:latest`t123MB" }
+        "info*"            { "Client: Docker Engine - Community (mock)" }
         default            { Write-Host "[mock] docker $s" }
     }
 }
@@ -190,6 +191,7 @@ if ($HasGit) {
 '{"name":"mock","version":"1.0.0","scripts":{"test":"echo test","build":"echo build"}}' | Out-File package.json -Encoding utf8
 New-Item -ItemType Directory -Force -Path node_modules | Out-Null
 New-Item -ItemType Directory -Force -Path updir\sub | Out-Null
+"ssh-ed25519 AAAAmockkey mock@sharmory" | Out-File "$FakeHome\.ssh\id_ed25519.pub" -Encoding ascii
 
 Pop-Location
 
@@ -371,6 +373,42 @@ Invoke-SharmoryTest "jenk-jobs"  { jenk-jobs }
 #########################################################################
 Write-Host "-- Sharmory Management --"
 Invoke-SharmoryTest "sharmory-update" { sharmory-update }
+
+#########################################################################
+# 13. ORCHESTRATOR
+#########################################################################
+Write-Host "-- Orchestrator --"
+Invoke-SharmoryTest "sharmory unknown" {
+    $out = sharmory nosuchthing | Out-String
+    if ($out -notmatch "Unknown subcommand") { throw "expected unknown subcommand" }
+}
+Invoke-SharmoryTest "sharmory list" {
+    $out = sharmory list | Out-String
+    if ($out -notmatch "mkcd") { throw "mkcd missing from list" }
+}
+Invoke-SharmoryTest "sharmory list git" {
+    $out = sharmory list git | Out-String
+    if ($out -notmatch "gitundo") { throw "gitundo missing" }
+}
+Invoke-SharmoryTest "sharmory help mkcd" {
+    $out = sharmory help mkcd | Out-String
+    if ($out -notmatch "Usage:") { throw "expected Usage" }
+}
+Invoke-SharmoryTest "sharmory run now" { sharmory run now }
+Invoke-SharmoryTest "sharmory doctor" {
+    $out = sharmory doctor | Out-String
+    if ($out -notmatch "Sharmory doctor") { throw "expected doctor report" }
+    if ($out -notmatch "\[ok\].*Sharmory") { throw "expected Sharmory loaded" }
+}
+Invoke-SharmoryTest "registry" {
+    $missing = @()
+    foreach ($row in Get-SharmoryRegistry) {
+        if (-not (Get-Command $row.Name -CommandType Function -ErrorAction SilentlyContinue)) {
+            $missing += $row.Name
+        }
+    }
+    if ($missing.Count -gt 0) { throw ("undefined: " + ($missing -join ", ")) }
+}
 
 #########################################################################
 # SUMMARY & CLEANUP

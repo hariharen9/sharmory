@@ -41,7 +41,7 @@ unalias -- \
     note jsonpp envload ffind cheat calc qr \
     todo mkproject epoch diffjson retry \
     jenk-crumb jenk-build jenk-logs jenk-jobs \
-    sharmory-update \
+    sharmory-update sharmory-doctor sharmory \
     2>/dev/null; true
 
 # Detect OS once so functions can branch cheaply
@@ -1803,5 +1803,540 @@ sharmory-update() {
         echo "Failed to update Sharmory."
         return 1
     fi
+}
+
+#########################################################################
+# 13. ORCHESTRATOR — HUD, catalog, doctor
+# Registry fields (caret-delimited): category^name^description^usage^deps
+#########################################################################
+
+_SHARMORY_REGISTRY=(
+    'files^mkcd^Make a directory and cd into it^mkcd <dir>^'
+    'files^up^Go up N directory levels^up [n]^'
+    'files^lsd^List directory (eza if present)^lsd^eza'
+    'files^fcd^Fuzzy cd into a subdirectory^fcd^fzf'
+    'files^ftext^Fuzzy-search file contents and open in editor^ftext^fzf'
+    'files^permsof^Show file permissions by owner/group/other^permsof <file>^'
+    'files^extract^Extract an archive by extension^extract <archive-file>^'
+    'files^compress^Compress a file or directory^compress <output> <path>^'
+    'files^duh^Disk usage of items in the current directory^duh^'
+    'files^sizeof^Sizes of subdirectories, largest first^sizeof [path]^'
+    'files^findbig^Find files above a given size^findbig [size] [dir]^'
+    'files^emptydirs^Find and optionally remove empty directories^emptydirs [dir]^'
+    'files^dupfind^Find duplicate files by hash^dupfind [dir]^'
+    'files^bak^Timestamped backup copy of a file^bak <file>^'
+    'files^cwd^Copy the working directory path to the clipboard^cwd^'
+    'files^clipcopy^Copy a file contents to the clipboard^clipcopy <file>^'
+    'files^watchrun^Re-run a command when a path changes^watchrun <path> -- <command...>^entr,fswatch'
+    'files^treelist^Recursive tree listing^treelist [dir] [depth]^'
+    'files^recent^Most recently modified files^recent [n]^'
+    'files^swap^Atomically swap two filenames^swap <file-a> <file-b>^'
+    'files^trash^Move a path to the system trash^trash <file-or-dir>^'
+    'git^gitundo^Undo last commit, keep changes staged^gitundo^'
+    'git^branchclean^Delete local branches already merged^branchclean^'
+    'git^branchage^Local branches sorted by last commit date^branchage^'
+    'git^gitlog-today^Your commits since midnight^gitlog-today^'
+    'git^gacp^Add, commit, and push^gacp <commit message>^'
+    'git^gclone^Clone a repo and cd into it^gclone <repo-url> [dir]^'
+    'git^gwip^Checkpoint commit of uncommitted work^gwip^'
+    'git^gunwip^Undo the last gwip commit^gunwip^'
+    'git^gitprune^Delete local branches whose remotes are gone^gitprune^'
+    'git^gswitch^Fuzzy-switch git branch^gswitch^fzf'
+    'git^prdiff^Diff current branch against a base^prdiff [base-branch]^'
+    'git^gitcontributors^Commit counts by author^gitcontributors^'
+    'git^gitsize^Size of the .git directory^gitsize^'
+    'git^gitconflicts^List unresolved merge conflict files^gitconflicts^'
+    'git^gitignore^Append a gitignore.io template^gitignore <lang1,lang2,...>^'
+    'git^gstash^Interactive stash picker^gstash^fzf'
+    'git^grebase^Interactive rebase N commits^grebase [n]^'
+    'git^gopen^Open the origin remote in a browser^gopen^'
+    'git^gitbranch-rename^Rename a branch locally and on the remote^gitbranch-rename <old> <new>^'
+    'git^gitlog-graph^Pretty one-line graph log^gitlog-graph^'
+    'git^gcleanup^Prune remotes, delete merged branches, tidy Go^gcleanup^'
+    'docker^dockernuke^Force stop and remove a container^dockernuke <container>^'
+    'docker^dockerclean-images^Remove dangling Docker images^dockerclean-images^'
+    'docker^dclean^Prune unused Docker data^dclean^'
+    'docker^dockerlogs^Tail container logs with timestamps^dockerlogs <container>^'
+    'docker^dsh^Shell into a running container^dsh^fzf'
+    'docker^dockersizes^Human-readable local image sizes^dockersizes^'
+    'docker^denv^Print a container environment^denv <container>^'
+    'docker^dbuild^Build an image tagged from the directory name^dbuild [tag]^'
+    'k8s^k8sctx^Switch kubectl context and namespace^k8sctx^fzf,kubectl'
+    'k8s^klogs^Stream logs from a picked pod^klogs^fzf,kubectl'
+    'k8s^kexec^Exec a shell into a picked pod^kexec^fzf,kubectl'
+    'k8s^ktop^Pods by CPU or memory^ktop [cpu|memory]^kubectl'
+    'k8s^kevents^Namespace events, most recent last^kevents^kubectl'
+    'k8s^kns^Set the current kubectl namespace^kns <namespace>^kubectl'
+    'k8s^kdesc^Describe a picked pod^kdesc^fzf,kubectl'
+    'k8s^kport^Port-forward to a pod^kport <local-port> <pod> <remote-port>^kubectl'
+    'go^covreport^Go tests with HTML coverage report^covreport^'
+    'go^gomodwhy^Why a module is in the Go graph^gomodwhy <module-path>^'
+    'go^goclean^gofmt, vet, and mod tidy^goclean^'
+    'go^goupdate^Upgrade Go module dependencies^goupdate^'
+    'go^gobench^Run Go benchmarks with memory stats^gobench [pattern]^'
+    'go^gonew^Scaffold a minimal Go module^gonew <module-path>^'
+    'go^gowatch^Re-run Go tests on save^gowatch^entr'
+    'node^npmclean^Delete node_modules and reinstall^npmclean^'
+    'node^npmscripts^List package.json scripts^npmscripts^jq'
+    'node^npmoutdated^Show outdated npm dependencies^npmoutdated^'
+    'node^npmsize^Size of node_modules^npmsize^'
+    'python^venvcreate^Create and activate ./venv^venvcreate^'
+    'python^pyclean^Remove __pycache__ and .pyc files^pyclean^'
+    'python^pyfreeze^Write requirements.txt from pip freeze^pyfreeze^'
+    'net^myip^Public-facing IP address^myip^'
+    'net^localip^Local network IP address^localip^'
+    'net^killport^Kill whatever is listening on a port^killport <port> [port ...]^'
+    'net^portwho^Process listening on a TCP port^portwho <port>^'
+    'net^certcheck^TLS certificate expiry for a domain^certcheck <domain>^'
+    'net^dnscheck^A, CNAME, and MX records^dnscheck <domain>^'
+    'net^httpstatus^HTTP status code for a URL^httpstatus <url>^'
+    'net^apihit^GET a URL, pretty-print JSON, show timing^apihit <url> [curl-args...]^'
+    'net^flushdns^Flush the local DNS cache^flushdns^'
+    'net^weather^Weather via wttr.in^weather [location]^'
+    'net^tcpcheck^TCP reachability check^tcpcheck <host> <port>^'
+    'net^shorten^Shorten a URL with is.gd^shorten <url>^'
+    'net^pingcheck^Five pings with a short summary^pingcheck <host>^'
+    'net^sshconfig^Host entries from ~/.ssh/config^sshconfig^'
+    'net^headers^HTTP response headers^headers <url>^'
+    'net^proxy^Toggle http(s)_proxy env vars^proxy <on [host:port]|off|status>^'
+    'security^passgen^Random base64 password^passgen [bytes]^'
+    'security^pubkey^Print SSH public keys^pubkey^'
+    'security^genssh^Generate an ed25519 SSH keypair^genssh <key-name> [email]^'
+    'security^b64e^Base64-encode text^b64e <text>^'
+    'security^b64d^Base64-decode text^b64d <base64-text>^'
+    'security^urlencode^URL-encode text^urlencode <text>^'
+    'security^urldecode^URL-decode text^urldecode <text>^'
+    'security^hashfile^MD5, SHA1, and SHA256 of a file^hashfile <file>^'
+    'security^genuuid^Random UUID v4^genuuid^'
+    'security^jwtdecode^Decode a JWT header and payload^jwtdecode <token>^'
+    'security^dotenv-check^Lint a .env file^dotenv-check [file]^'
+    'system^mem^Physical memory usage^mem^'
+    'system^cpu^Snapshot of CPU/process activity^cpu^'
+    'system^pidtree^Process tree for a PID^pidtree <pid>^'
+    'system^fkill^Fuzzy-pick a process and kill it^fkill^fzf'
+    'system^now^Current date and time^now^'
+    'system^timer^Countdown timer^timer <seconds> [label]^'
+    'system^diskusage^Disk usage via ncdu or df/du^diskusage [path]^'
+    'system^envdiff^Diff two .env files by key^envdiff <file1> <file2>^'
+    'system^ports^Listening TCP/UDP ports^ports^'
+    'system^sysinfo^One-screen system summary^sysinfo^'
+    'prod^note^Append a timestamped note to ~/notes^note <text>^'
+    'prod^jsonpp^Pretty-print a JSON file^jsonpp <file>^jq'
+    'prod^envload^Load a .env file into the shell^envload [file]^'
+    'prod^ffind^Find files by name or search contents^ffind <text> | ffind -f <filename>^'
+    'prod^cheat^tldr or man for a command^cheat <command>^tldr'
+    'prod^calc^Command-line calculator^calc <expression>^'
+    'prod^qr^QR code in the terminal^qr <text>^'
+    'prod^todo^Append or list entries in ~/todo.md^todo [text]^'
+    'prod^mkproject^Scaffold a project directory^mkproject <name> [go|node|python]^'
+    'prod^epoch^Unix epoch and human datetime^epoch [epoch|date]^'
+    'prod^diffjson^Semantic diff of two JSON files^diffjson <file-a> <file-b>^jq'
+    'prod^retry^Retry a command with exponential backoff^retry <max-attempts> <command> [args...]^'
+    'jenkins^jenk-crumb^Jenkins CSRF crumb^jenk-crumb^jq'
+    'jenkins^jenk-build^Trigger a Jenkins job build^jenk-build <job-name>^'
+    'jenkins^jenk-logs^Console log of the last Jenkins build^jenk-logs <job-name>^'
+    'jenkins^jenk-jobs^List Jenkins job names^jenk-jobs^jq'
+    'meta^sharmory^Interactive catalog and dispatcher^sharmory [list|help|run|doctor]^'
+    'meta^sharmory-doctor^Environment health check^sharmory doctor^'
+    'meta^sharmory-update^Download the latest Sharmory from GitHub^sharmory-update^'
+)
+
+_sharmory_parse_row() {
+    local row=$1
+    _sh_cat=${row%%^*}
+    local rest=${row#*^}
+    _sh_name=${rest%%^*}
+    rest=${rest#*^}
+    _sh_desc=${rest%%^*}
+    rest=${rest#*^}
+    _sh_usage=${rest%%^*}
+    _sh_deps=${rest#*^}
+}
+
+_sharmory_registry_lookup() {
+    local want=$1 row
+    for row in "${_SHARMORY_REGISTRY[@]}"; do
+        _sharmory_parse_row "$row"
+        if [[ "$_sh_name" == "$want" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+_sharmory_registry_check() {
+    local row missing=0
+    for row in "${_SHARMORY_REGISTRY[@]}"; do
+        _sharmory_parse_row "$row"
+        if ! typeset -f "$_sh_name" >/dev/null; then
+            echo "missing function: $_sh_name"
+            missing=1
+        fi
+    done
+    return $missing
+}
+
+_sharmory_self_usage() {
+    cat <<'EOF'
+Usage: sharmory [list|help|run|doctor] [args]
+
+  sharmory                    Interactive HUD (fzf, or a numbered menu)
+  sharmory list [category]    List commands
+  sharmory help [name]        Explain a command (or this orchestrator)
+  sharmory run <name> [args]  Run a catalogued command
+  sharmory doctor             Environment health check
+
+Categories: files git docker k8s go node python net security system prod jenkins meta
+EOF
+}
+
+_sharmory_list() {
+    local filter=${1:-}
+    local row printed=0
+    printf "%-10s %-22s %s\n" "CATEGORY" "NAME" "DESCRIPTION"
+    printf "%-10s %-22s %s\n" "--------" "----" "-----------"
+    for row in "${_SHARMORY_REGISTRY[@]}"; do
+        _sharmory_parse_row "$row"
+        if [[ -n "$filter" && "$_sh_cat" != "$filter" ]]; then
+            continue
+        fi
+        printf "%-10s %-22s %s\n" "$_sh_cat" "$_sh_name" "$_sh_desc"
+        printed=1
+    done
+    if [[ $printed -eq 0 ]]; then
+        echo "No commands in category: $filter"
+        return 1
+    fi
+}
+
+_sharmory_help() {
+    local name=$1
+    if [[ -z "$name" || "$name" == "sharmory" ]]; then
+        _sharmory_self_usage
+        return 0
+    fi
+    if ! _sharmory_registry_lookup "$name"; then
+        echo "Unknown command: $name"
+        echo "Try: sharmory list"
+        return 1
+    fi
+    echo "$_sh_name  ($_sh_cat)"
+    echo "  $_sh_desc"
+    echo "  Usage: $_sh_usage"
+    if [[ -n "$_sh_deps" ]]; then
+        echo "  Optional: $_sh_deps"
+    fi
+}
+
+_sharmory_run() {
+    local name=$1
+    shift || true
+    if [[ -z "$name" ]]; then
+        echo "Usage: sharmory run <name> [args...]"
+        return 1
+    fi
+    case "$name" in
+        sharmory)
+            _sharmory_self_usage
+            return 0
+            ;;
+        sharmory-doctor|doctor)
+            sharmory-doctor
+            return $?
+            ;;
+    esac
+    if ! _sharmory_registry_lookup "$name"; then
+        echo "Unknown command: $name"
+        return 1
+    fi
+    if ! typeset -f "$name" >/dev/null; then
+        echo "Not defined in this shell: $name"
+        return 1
+    fi
+    "$name" "$@"
+}
+
+_sharmory_needs_args() {
+    [[ "$1" == *'<'* ]]
+}
+
+_sharmory_prompt_and_run() {
+    local name=$1
+    if [[ "$name" == "sharmory" ]]; then
+        _sharmory_self_usage
+        return 0
+    fi
+    if [[ "$name" == "sharmory-doctor" || "$name" == "doctor" ]]; then
+        sharmory-doctor
+        return $?
+    fi
+    if ! _sharmory_registry_lookup "$name"; then
+        echo "Unknown command: $name"
+        return 1
+    fi
+    echo ""
+    _sharmory_help "$name"
+    local line=""
+    if _sharmory_needs_args "$_sh_usage"; then
+        echo -n "args (empty cancels): "
+        IFS= read -r line || true
+        if [[ -z "$line" ]]; then
+            echo "Cancelled."
+            return 0
+        fi
+        # shellcheck disable=SC2086
+        _sharmory_run "$name" ${=line}
+    else
+        _sharmory_run "$name"
+    fi
+}
+
+_sharmory_hud_fzf() {
+    local selection name
+    while true; do
+        selection=$(
+            for row in "${_SHARMORY_REGISTRY[@]}"; do
+                _sharmory_parse_row "$row"
+                printf '%s\t%s\t%s\t%s\t%s\n' "$_sh_cat" "$_sh_name" "$_sh_desc" "$_sh_usage" "${_sh_deps:-none}"
+            done | fzf \
+                --delimiter=$'\t' \
+                --with-nth=1,2,3 \
+                --prompt='sharmory> ' \
+                --header='Enter to run, Esc to quit' \
+                --preview='printf "Usage: %s\nOptional: %s\n" {4} {5}' \
+                --preview-window=down,3:wrap
+        ) || return 0
+        [[ -z "$selection" ]] && return 0
+        name=$(printf '%s' "$selection" | cut -d$'\t' -f2)
+        _sharmory_prompt_and_run "$name"
+        echo ""
+    done
+}
+
+_sharmory_print_numbered() {
+    local row i=1
+    printf "  %3s  %-10s %-22s %s\n" "#" "CATEGORY" "NAME" "DESCRIPTION"
+    for row in "${_SHARMORY_REGISTRY[@]}"; do
+        _sharmory_parse_row "$row"
+        printf "  %3d  %-10s %-22s %s\n" "$i" "$_sh_cat" "$_sh_name" "$_sh_desc"
+        (( i++ )) || true
+    done
+}
+
+_sharmory_hud_menu() {
+    local names=() line cmd rest idx row
+    echo "Sharmory HUD  (no fzf — numbered menu)"
+    echo "Commands: list [cat] | help <name> | <number> | <name> | doctor | q"
+    echo ""
+    _sharmory_print_numbered
+    for row in "${_SHARMORY_REGISTRY[@]}"; do
+        _sharmory_parse_row "$row"
+        names+=("$_sh_name")
+    done
+    while true; do
+        echo -n "sharmory> "
+        IFS= read -r line || return 0
+        line=${line## }
+        line=${line%% }
+        [[ -z "$line" ]] && continue
+        cmd=${line%% *}
+        rest=${line#"$cmd"}
+        rest=${rest## }
+        case "$cmd" in
+            q|quit|exit) return 0 ;;
+            doctor) sharmory-doctor ;;
+            list) _sharmory_list "$rest" ;;
+            help)
+                if [[ -n "$rest" ]]; then
+                    _sharmory_help "$rest"
+                else
+                    _sharmory_self_usage
+                fi
+                ;;
+            *)
+                if [[ "$cmd" == <-> ]]; then
+                    idx=$cmd
+                    if (( idx < 1 || idx > ${#names[@]} )); then
+                        echo "No command numbered $idx"
+                        continue
+                    fi
+                    _sharmory_prompt_and_run "${names[$idx]}"
+                else
+                    _sharmory_prompt_and_run "$cmd"
+                fi
+                ;;
+        esac
+        echo ""
+    done
+}
+
+_sharmory_hud() {
+    if command -v fzf &>/dev/null; then
+        _sharmory_hud_fzf
+    else
+        _sharmory_hud_menu
+    fi
+}
+
+_sharmory_hint() {
+    case "$1" in
+        fzf) echo "brew install fzf  |  apt install fzf  |  winget install fzf" ;;
+        jq) echo "brew install jq  |  apt install jq  |  winget install jqlang.jq" ;;
+        eza) echo "brew install eza  |  apt install eza  |  winget install eza-community.eza" ;;
+        tldr) echo "brew install tldr  |  npm install -g tldr  |  winget install tldr" ;;
+        entr) echo "brew install entr  |  apt install entr" ;;
+        fswatch) echo "brew install fswatch" ;;
+        python3|python) echo "brew install python  |  apt install python3  |  winget install Python.Python.3.12" ;;
+        go) echo "brew install go  |  apt install golang  |  winget install GoLang.Go" ;;
+        node) echo "brew install node  |  apt install nodejs  |  winget install OpenJS.NodeJS" ;;
+        openssl) echo "brew install openssl  |  apt install openssl" ;;
+        *) echo "install $1 via your package manager" ;;
+    esac
+}
+
+_sharmory_doctor_line() {
+    printf "  [%s] %-12s %s\n" "$1" "$2" "$3"
+}
+
+# Environment health check. Exit 1 only if Sharmory itself is not loaded.
+sharmory-doctor() {
+    local ok=0 warn=0 miss=0
+    echo "Sharmory doctor"
+    echo ""
+
+    if typeset -f sharmory >/dev/null; then
+        _sharmory_doctor_line "ok" "Sharmory" "loaded"
+        ok=$(( ok + 1 ))
+    else
+        _sharmory_doctor_line "miss" "Sharmory" "not sourced"
+        miss=$(( miss + 1 ))
+    fi
+
+    local install_path="${HOME}/.sharmory/functions.zsh"
+    if [[ -f "$install_path" ]]; then
+        _sharmory_doctor_line "ok" "Install" "$install_path"
+        ok=$(( ok + 1 ))
+    else
+        _sharmory_doctor_line "warn" "Install" "canonical path not found ($install_path)"
+        warn=$(( warn + 1 ))
+    fi
+
+    _sharmory_doctor_line "ok" "Shell" "zsh ${ZSH_VERSION:-unknown}"
+    ok=$(( ok + 1 ))
+
+    if command -v git &>/dev/null; then
+        local gver gname gmail
+        gver=$(git --version 2>/dev/null)
+        gname=$(git config user.name 2>/dev/null)
+        gmail=$(git config user.email 2>/dev/null)
+        if [[ -n "$gname" && -n "$gmail" ]]; then
+            _sharmory_doctor_line "ok" "Git" "$gver ($gname <$gmail>)"
+            ok=$(( ok + 1 ))
+        else
+            _sharmory_doctor_line "warn" "Git" "$gver (user.name/email not set)"
+            warn=$(( warn + 1 ))
+        fi
+    else
+        _sharmory_doctor_line "miss" "Git" "not installed"
+        miss=$(( miss + 1 ))
+    fi
+
+    local pubs
+    pubs=(~/.ssh/*.pub(N))
+    if (( ${#pubs} )); then
+        _sharmory_doctor_line "ok" "SSH" "${#pubs} public key(s) in ~/.ssh"
+        ok=$(( ok + 1 ))
+    else
+        _sharmory_doctor_line "warn" "SSH" "no ~/.ssh/*.pub keys found"
+        warn=$(( warn + 1 ))
+    fi
+
+    if command -v docker &>/dev/null; then
+        if docker info &>/dev/null; then
+            _sharmory_doctor_line "ok" "Docker" "daemon reachable"
+            ok=$(( ok + 1 ))
+        else
+            _sharmory_doctor_line "warn" "Docker" "installed, daemon not reachable"
+            warn=$(( warn + 1 ))
+        fi
+    else
+        _sharmory_doctor_line "miss" "Docker" "not installed"
+        miss=$(( miss + 1 ))
+    fi
+
+    if command -v kubectl &>/dev/null; then
+        _sharmory_doctor_line "ok" "kubectl" "installed"
+        ok=$(( ok + 1 ))
+    else
+        _sharmory_doctor_line "miss" "kubectl" "not installed"
+        miss=$(( miss + 1 ))
+    fi
+
+    echo ""
+    echo "Optional tools"
+    local tool
+    for tool in fzf jq eza tldr python3 go node openssl; do
+        if command -v "$tool" &>/dev/null; then
+            _sharmory_doctor_line "ok" "$tool" "installed"
+            ok=$(( ok + 1 ))
+        else
+            _sharmory_doctor_line "miss" "$tool" "$(_sharmory_hint "$tool")"
+            miss=$(( miss + 1 ))
+        fi
+    done
+
+    if command -v entr &>/dev/null; then
+        _sharmory_doctor_line "ok" "entr" "installed"
+        ok=$(( ok + 1 ))
+    elif command -v fswatch &>/dev/null; then
+        _sharmory_doctor_line "ok" "fswatch" "installed"
+        ok=$(( ok + 1 ))
+    else
+        _sharmory_doctor_line "miss" "entr" "$(_sharmory_hint entr)  (or fswatch)"
+        miss=$(( miss + 1 ))
+    fi
+
+    echo ""
+    printf "  %d ok  %d warn  %d miss\n" "$ok" "$warn" "$miss"
+    echo ""
+    if ! typeset -f sharmory >/dev/null; then
+        return 1
+    fi
+    return 0
+}
+
+sharmory() {
+    local sub=${1:-}
+    case "$sub" in
+        "")
+            if [[ ! -t 0 ]]; then
+                _sharmory_self_usage
+                echo ""
+                _sharmory_list
+                return 0
+            fi
+            _sharmory_hud
+            ;;
+        -h|--help|help)
+            shift
+            _sharmory_help "$1"
+            ;;
+        list)
+            shift
+            _sharmory_list "$1"
+            ;;
+        run)
+            shift
+            _sharmory_run "$@"
+            ;;
+        doctor)
+            sharmory-doctor
+            ;;
+        *)
+            echo "Unknown subcommand: $sub"
+            _sharmory_self_usage
+            return 1
+            ;;
+    esac
 }
 

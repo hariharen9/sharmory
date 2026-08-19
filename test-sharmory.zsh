@@ -91,6 +91,7 @@ case "$*" in
     images\ --format*)      printf "mockrepo:latest\t123MB\n" ;;
     inspect\ --format*)     printf "MOCK_VAR=hello\nOTHER_VAR=world\n" ;;
     build*)                 echo "Successfully built mockimage123" ;;
+    info*)                  echo "Client: Docker Engine - Community (mock)" ;;
     *) : ;;
 esac
 exit 0
@@ -714,6 +715,18 @@ run  "jenk-logs"   "jenk-logs mock-job"
 #########################################################################
 section "Sharmory Management"
 run  "sharmory-update" "sharmory-update"
+
+#########################################################################
+# 13. ORCHESTRATOR
+#########################################################################
+section "Orchestrator"
+run  "sharmory unknown"   "sharmory nosuch; [[ \$? -ne 0 ]]"
+run  "sharmory list"      "sharmory list | grep -q mkcd"
+run  "sharmory list git"  "sharmory list git | grep -q gitundo"
+run  "sharmory help mkcd" "sharmory help mkcd | grep -q Usage"
+run  "sharmory run now"   "sharmory run now"
+run  "sharmory doctor"    "sharmory doctor | grep -q 'Sharmory doctor'"
+run  "registry"          "_sharmory_registry_check"
 
 #########################################################################
 # SUMMARY — wait for all parallel jobs, then print in order

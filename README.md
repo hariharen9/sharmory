@@ -16,6 +16,20 @@ curl -fsSL https://raw.githubusercontent.com/hariharen9/sharmory/main/install.sh
 irm https://raw.githubusercontent.com/hariharen9/sharmory/main/install.ps1 | iex
 ```
 
+## Command HUD
+
+Type `sharmory` with no arguments for an interactive catalog (fzf if installed,
+otherwise a numbered menu). You can also query it non-interactively:
+
+```bash
+sharmory                  # interactive HUD
+sharmory list             # full catalog
+sharmory list git         # one category
+sharmory help killport    # description + usage
+sharmory run now          # run a catalogued command
+sharmory doctor           # environment health check
+```
+
 ---
 
 ## 🔄 Updating & Maintenance
@@ -100,7 +114,7 @@ standard alternative) if it is missing.
 - **Productivity** — `note`, `jsonpp`, `envload`, `ffind`, `cheat`, `calc`, `qr`
 - **CI/Jenkins** — `jenk-crumb`, `jenk-build`, `jenk-logs`, `jenk-jobs`
   (needs `JENKINS_URL`, `JENKINS_USER`, `JENKINS_TOKEN` env vars)
-- **Management** — `sharmory-update`
+- **Management** — `sharmory`, `sharmory doctor`, `sharmory-update`
 
 ## Testing
 

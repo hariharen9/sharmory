@@ -836,3 +836,462 @@ function sharmory-update {
     }
 }
 
+#########################################################################
+# 13. ORCHESTRATOR — HUD, catalog, doctor
+#########################################################################
+
+function Get-SharmoryRegistry {
+    @(
+        [pscustomobject]@{ Category = "files"; Name = "mkcd"; Description = "Make a directory and cd into it"; Usage = "mkcd <dir>"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "up"; Description = "Go up N directory levels"; Usage = "up [n]"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "lsd"; Description = "List directory (eza if present)"; Usage = "lsd"; Deps = "eza" }
+        [pscustomobject]@{ Category = "files"; Name = "permsof"; Description = "Show file ACL permissions"; Usage = "permsof <file>"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "extract"; Description = "Extract an archive by extension"; Usage = "extract <archive-file>"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "compress"; Description = "Compress a file or directory to zip"; Usage = "compress <output.zip> <path>"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "duh"; Description = "Sizes of items in the current directory"; Usage = "duh"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "sizeof"; Description = "Sizes of subdirectories, largest first"; Usage = "sizeof [path]"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "findbig"; Description = "Find files above a given size in MB"; Usage = "findbig [sizeMB] [dir]"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "emptydirs"; Description = "Find and optionally remove empty directories"; Usage = "emptydirs [dir]"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "dupfind"; Description = "Find duplicate files by SHA256"; Usage = "dupfind [dir]"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "bak"; Description = "Timestamped backup copy of a file"; Usage = "bak <file>"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "cwd"; Description = "Copy the working directory path to the clipboard"; Usage = "cwd"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "clipcopy"; Description = "Copy a file contents to the clipboard"; Usage = "clipcopy <file>"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gitundo"; Description = "Undo last commit, keep changes staged"; Usage = "gitundo"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "branchclean"; Description = "Delete local branches already merged"; Usage = "branchclean"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "branchage"; Description = "Local branches sorted by last commit date"; Usage = "branchage"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gitlog-today"; Description = "Your commits since midnight"; Usage = "gitlog-today"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gacp"; Description = "Add, commit, and push"; Usage = "gacp <commit message>"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gclone"; Description = "Clone a repo and cd into it"; Usage = "gclone <repo-url> [dir]"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gwip"; Description = "Checkpoint commit of uncommitted work"; Usage = "gwip"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gunwip"; Description = "Undo the last gwip commit"; Usage = "gunwip"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gitprune"; Description = "Delete local branches whose remotes are gone"; Usage = "gitprune"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "prdiff"; Description = "Diff current branch against a base"; Usage = "prdiff [base-branch]"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gitcontributors"; Description = "Commit counts by author"; Usage = "gitcontributors"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gitsize"; Description = "Size of the .git directory"; Usage = "gitsize"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gitconflicts"; Description = "List unresolved merge conflict files"; Usage = "gitconflicts"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gitignore"; Description = "Append a gitignore.io template"; Usage = "gitignore <lang1,lang2,...>"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "dockernuke"; Description = "Force stop and remove a container"; Usage = "dockernuke <container>"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "dockerclean-images"; Description = "Remove dangling Docker images"; Usage = "dockerclean-images"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "dclean"; Description = "Prune unused Docker data"; Usage = "dclean"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "dockerlogs"; Description = "Tail container logs with timestamps"; Usage = "dockerlogs <container>"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "dockersizes"; Description = "Human-readable local image sizes"; Usage = "dockersizes"; Deps = "" }
+        [pscustomobject]@{ Category = "k8s"; Name = "ktop"; Description = "Pods by CPU or memory"; Usage = "ktop [cpu|memory]"; Deps = "kubectl" }
+        [pscustomobject]@{ Category = "k8s"; Name = "kevents"; Description = "Namespace events, most recent last"; Usage = "kevents"; Deps = "kubectl" }
+        [pscustomobject]@{ Category = "go"; Name = "covreport"; Description = "Go tests with HTML coverage report"; Usage = "covreport"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "gomodwhy"; Description = "Why a module is in the Go graph"; Usage = "gomodwhy <module-path>"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "goclean"; Description = "gofmt, vet, and mod tidy"; Usage = "goclean"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "goupdate"; Description = "Upgrade Go module dependencies"; Usage = "goupdate"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "gobench"; Description = "Run Go benchmarks with memory stats"; Usage = "gobench [pattern]"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "npmclean"; Description = "Delete node_modules and reinstall"; Usage = "npmclean"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "npmscripts"; Description = "List package.json scripts"; Usage = "npmscripts"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "npmoutdated"; Description = "Show outdated npm dependencies"; Usage = "npmoutdated"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "npmsize"; Description = "Size of node_modules"; Usage = "npmsize"; Deps = "" }
+        [pscustomobject]@{ Category = "python"; Name = "venvcreate"; Description = "Create and activate .\venv"; Usage = "venvcreate"; Deps = "" }
+        [pscustomobject]@{ Category = "python"; Name = "pyclean"; Description = "Remove __pycache__ and .pyc files"; Usage = "pyclean"; Deps = "" }
+        [pscustomobject]@{ Category = "python"; Name = "pyfreeze"; Description = "Write requirements.txt from pip freeze"; Usage = "pyfreeze"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "myip"; Description = "Public-facing IP address"; Usage = "myip"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "localip"; Description = "Local network IP address"; Usage = "localip"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "killport"; Description = "Kill whatever is listening on a port"; Usage = "killport <port> [port ...]"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "portwho"; Description = "Process listening on a TCP port"; Usage = "portwho <port>"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "dnscheck"; Description = "A, CNAME, and MX records"; Usage = "dnscheck <domain>"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "httpstatus"; Description = "HTTP status code for a URL"; Usage = "httpstatus <url>"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "apihit"; Description = "GET a URL, pretty-print JSON, show timing"; Usage = "apihit <url>"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "flushdns"; Description = "Flush the local DNS cache"; Usage = "flushdns"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "weather"; Description = "Weather via wttr.in"; Usage = "weather [location]"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "tcpcheck"; Description = "TCP reachability check"; Usage = "tcpcheck <host> <port>"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "shorten"; Description = "Shorten a URL with is.gd"; Usage = "shorten <url>"; Deps = "" }
+        [pscustomobject]@{ Category = "security"; Name = "passgen"; Description = "Random base64 password"; Usage = "passgen [bytes]"; Deps = "" }
+        [pscustomobject]@{ Category = "security"; Name = "pubkey"; Description = "Print SSH public keys"; Usage = "pubkey"; Deps = "" }
+        [pscustomobject]@{ Category = "security"; Name = "genssh"; Description = "Generate an ed25519 SSH keypair"; Usage = "genssh <key-name> [email]"; Deps = "" }
+        [pscustomobject]@{ Category = "security"; Name = "b64e"; Description = "Base64-encode text"; Usage = "b64e <text>"; Deps = "" }
+        [pscustomobject]@{ Category = "security"; Name = "b64d"; Description = "Base64-decode text"; Usage = "b64d <base64-text>"; Deps = "" }
+        [pscustomobject]@{ Category = "security"; Name = "urlencode"; Description = "URL-encode text"; Usage = "urlencode <text>"; Deps = "" }
+        [pscustomobject]@{ Category = "security"; Name = "urldecode"; Description = "URL-decode text"; Usage = "urldecode <text>"; Deps = "" }
+        [pscustomobject]@{ Category = "security"; Name = "hashfile"; Description = "MD5, SHA1, and SHA256 of a file"; Usage = "hashfile <file>"; Deps = "" }
+        [pscustomobject]@{ Category = "security"; Name = "genuuid"; Description = "Random UUID v4"; Usage = "genuuid"; Deps = "" }
+        [pscustomobject]@{ Category = "system"; Name = "mem"; Description = "Physical memory usage"; Usage = "mem"; Deps = "" }
+        [pscustomobject]@{ Category = "system"; Name = "cpu"; Description = "Snapshot of CPU/process activity"; Usage = "cpu"; Deps = "" }
+        [pscustomobject]@{ Category = "system"; Name = "pidtree"; Description = "Process tree for a PID"; Usage = "pidtree <pid>"; Deps = "" }
+        [pscustomobject]@{ Category = "system"; Name = "now"; Description = "Current date and time"; Usage = "now"; Deps = "" }
+        [pscustomobject]@{ Category = "system"; Name = "timer"; Description = "Countdown timer"; Usage = "timer <seconds> [label]"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "note"; Description = "Append a timestamped note to ~/notes"; Usage = "note <text>"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "jsonpp"; Description = "Pretty-print a JSON file"; Usage = "jsonpp <file>"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "envload"; Description = "Load a .env file into the environment"; Usage = "envload [file]"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "ffind"; Description = "Find files by name or search contents"; Usage = "ffind <text> | ffind -f <filename>"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "cheat"; Description = "tldr or Get-Help for a command"; Usage = "cheat <command>"; Deps = "tldr" }
+        [pscustomobject]@{ Category = "prod"; Name = "calc"; Description = "Command-line calculator"; Usage = "calc <expression>"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "qr"; Description = "QR code in the terminal"; Usage = "qr <text>"; Deps = "" }
+        [pscustomobject]@{ Category = "jenkins"; Name = "jenk-crumb"; Description = "Jenkins CSRF crumb"; Usage = "jenk-crumb"; Deps = "" }
+        [pscustomobject]@{ Category = "jenkins"; Name = "jenk-build"; Description = "Trigger a Jenkins job build"; Usage = "jenk-build <job-name>"; Deps = "" }
+        [pscustomobject]@{ Category = "jenkins"; Name = "jenk-logs"; Description = "Console log of the last Jenkins build"; Usage = "jenk-logs <job-name>"; Deps = "" }
+        [pscustomobject]@{ Category = "jenkins"; Name = "jenk-jobs"; Description = "List Jenkins job names"; Usage = "jenk-jobs"; Deps = "" }
+        [pscustomobject]@{ Category = "meta"; Name = "sharmory"; Description = "Interactive catalog and dispatcher"; Usage = "sharmory [list|help|run|doctor]"; Deps = "" }
+        [pscustomobject]@{ Category = "meta"; Name = "sharmory-doctor"; Description = "Environment health check"; Usage = "sharmory doctor"; Deps = "" }
+        [pscustomobject]@{ Category = "meta"; Name = "sharmory-update"; Description = "Download the latest Sharmory from GitHub"; Usage = "sharmory-update"; Deps = "" }
+    )
+}
+
+function Get-SharmoryRegistryEntry {
+    param([Parameter(Mandatory)][string]$Name)
+    Get-SharmoryRegistry | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
+}
+
+function Show-SharmoryUsage {
+    @"
+Usage: sharmory [list|help|run|doctor] [args]
+
+  sharmory                    Interactive HUD (fzf, or a numbered menu)
+  sharmory list [category]    List commands
+  sharmory help [name]        Explain a command (or this orchestrator)
+  sharmory run <name> [args]  Run a catalogued command
+  sharmory doctor             Environment health check
+
+Categories: files git docker k8s go node python net security system prod jenkins meta
+"@
+}
+
+function Show-SharmoryList {
+    param([string]$Category)
+    $rows = Get-SharmoryRegistry
+    if ($Category) {
+        $rows = $rows | Where-Object { $_.Category -eq $Category }
+    }
+    if (-not $rows) {
+        Write-Output "No commands in category: $Category"
+        return
+    }
+    Write-Output ("{0,-10} {1,-22} {2}" -f "CATEGORY", "NAME", "DESCRIPTION")
+    Write-Output ("{0,-10} {1,-22} {2}" -f "--------", "----", "-----------")
+    foreach ($r in $rows) {
+        Write-Output ("{0,-10} {1,-22} {2}" -f $r.Category, $r.Name, $r.Description)
+    }
+}
+
+function Show-SharmoryHelp {
+    param([string]$Name)
+    if (-not $Name -or $Name -eq "sharmory") {
+        Show-SharmoryUsage
+        return
+    }
+    $row = Get-SharmoryRegistryEntry $Name
+    if (-not $row) {
+        Write-Output "Unknown command: $Name"
+        Write-Output "Try: sharmory list"
+        return
+    }
+    Write-Output "$($row.Name)  ($($row.Category))"
+    Write-Output "  $($row.Description)"
+    Write-Output "  Usage: $($row.Usage)"
+    if ($row.Deps) {
+        Write-Output "  Optional: $($row.Deps)"
+    }
+}
+
+function Invoke-SharmoryRun {
+    param(
+        [string]$Name,
+        [string[]]$RunArgs
+    )
+    if (-not $Name) {
+        Write-Output "Usage: sharmory run <name> [args...]"
+        return
+    }
+    if ($Name -eq "sharmory") {
+        Show-SharmoryUsage
+        return
+    }
+    if ($Name -eq "sharmory-doctor" -or $Name -eq "doctor") {
+        sharmory-doctor
+        return
+    }
+    $row = Get-SharmoryRegistryEntry $Name
+    if (-not $row) {
+        Write-Output "Unknown command: $Name"
+        return
+    }
+    $fn = Get-Command $Name -CommandType Function -ErrorAction SilentlyContinue
+    if (-not $fn) {
+        Write-Output "Not defined in this shell: $Name"
+        return
+    }
+    if ($RunArgs -and $RunArgs.Count -gt 0) {
+        & $Name @RunArgs
+    } else {
+        & $Name
+    }
+}
+
+function Test-SharmoryNeedsArgs {
+    param([string]$Usage)
+    return ($Usage -like "*<*")
+}
+
+function Invoke-SharmoryPromptAndRun {
+    param([string]$Name)
+    if ($Name -eq "sharmory") {
+        Show-SharmoryUsage
+        return
+    }
+    if ($Name -eq "sharmory-doctor" -or $Name -eq "doctor") {
+        sharmory-doctor
+        return
+    }
+    $row = Get-SharmoryRegistryEntry $Name
+    if (-not $row) {
+        Write-Output "Unknown command: $Name"
+        return
+    }
+    Write-Host ""
+    Show-SharmoryHelp $Name
+    if (Test-SharmoryNeedsArgs $row.Usage) {
+        $line = Read-Host "args (empty cancels)"
+        if (-not $line) {
+            Write-Host "Cancelled."
+            return
+        }
+        $split = $line -split '\s+', 0, "RegexMatch"
+        Invoke-SharmoryRun $Name $split
+    } else {
+        Invoke-SharmoryRun $Name @()
+    }
+}
+
+function Start-SharmoryHudFzf {
+    $entries = Get-SharmoryRegistry
+    while ($true) {
+        $tsv = foreach ($r in $entries) {
+            $dep = if ($r.Deps) { $r.Deps } else { "none" }
+            "{0}`t{1}`t{2}`t{3}`t{4}" -f $r.Category, $r.Name, $r.Description, $r.Usage, $dep
+        }
+        $selection = $tsv | fzf --delimiter="`t" --with-nth=1,2,3 --prompt="sharmory> " --header="Enter to run, Esc to quit" --preview="printf 'Usage: %s\nOptional: %s\n' {4} {5}" --preview-window="down,3:wrap"
+        if (-not $selection) { return }
+        $name = ($selection -split "`t")[1]
+        Invoke-SharmoryPromptAndRun $name
+        Write-Host ""
+    }
+}
+
+function Start-SharmoryHudMenu {
+    $entries = @(Get-SharmoryRegistry)
+    Write-Host "Sharmory HUD  (no fzf - numbered menu)"
+    Write-Host "Commands: list [cat] | help <name> | <number> | <name> | doctor | q"
+    Write-Host ""
+    Write-Host ("  {0,3}  {1,-10} {2,-22} {3}" -f "#", "CATEGORY", "NAME", "DESCRIPTION")
+    $i = 1
+    foreach ($r in $entries) {
+        Write-Host ("  {0,3}  {1,-10} {2,-22} {3}" -f $i, $r.Category, $r.Name, $r.Description)
+        $i++
+    }
+    while ($true) {
+        $line = Read-Host "sharmory"
+        if ($null -eq $line) { return }
+        $line = $line.Trim()
+        if (-not $line) { continue }
+        $parts = $line -split '\s+', 2
+        $cmd = $parts[0]
+        $rest = if ($parts.Count -gt 1) { $parts[1] } else { "" }
+        switch -Regex ($cmd) {
+            '^(q|quit|exit)$' { return }
+            '^doctor$' { sharmory-doctor }
+            '^list$' { Show-SharmoryList $rest }
+            '^help$' {
+                if ($rest) { Show-SharmoryHelp $rest } else { Show-SharmoryUsage }
+            }
+            '^\d+$' {
+                $idx = [int]$cmd
+                if ($idx -lt 1 -or $idx -gt $entries.Count) {
+                    Write-Output "No command numbered $idx"
+                } else {
+                    Invoke-SharmoryPromptAndRun $entries[$idx - 1].Name
+                }
+            }
+            default { Invoke-SharmoryPromptAndRun $cmd }
+        }
+        Write-Host ""
+    }
+}
+
+function Start-SharmoryHud {
+    if (Get-Command fzf -ErrorAction SilentlyContinue) {
+        Start-SharmoryHudFzf
+    } else {
+        Start-SharmoryHudMenu
+    }
+}
+
+function Get-SharmoryInstallHint {
+    param([string]$Tool)
+    switch ($Tool) {
+        "fzf" { "winget install fzf  |  brew install fzf  |  apt install fzf" }
+        "jq" { "winget install jqlang.jq  |  brew install jq  |  apt install jq" }
+        "eza" { "winget install eza-community.eza  |  brew install eza" }
+        "tldr" { "winget install tldr  |  npm install -g tldr  |  brew install tldr" }
+        "python" { "winget install Python.Python.3.12  |  brew install python" }
+        "go" { "winget install GoLang.Go  |  brew install go" }
+        "node" { "winget install OpenJS.NodeJS  |  brew install node" }
+        "openssl" { "winget install ShiningLight.OpenSSL  |  brew install openssl" }
+        default { "install $Tool via your package manager" }
+    }
+}
+
+function Write-SharmoryDoctorLine {
+    param([string]$Status, [string]$Label, [string]$Detail)
+    Write-Output ("  [{0}] {1,-12} {2}" -f $Status, $Label, $Detail)
+}
+
+function sharmory-doctor {
+    $ok = 0; $warn = 0; $miss = 0
+    Write-Output "Sharmory doctor"
+    Write-Output ""
+
+    $loaded = [bool](Get-Command sharmory -CommandType Function -ErrorAction SilentlyContinue)
+    if ($loaded) {
+        Write-SharmoryDoctorLine "ok" "Sharmory" "loaded"
+        $ok++
+    } else {
+        Write-SharmoryDoctorLine "miss" "Sharmory" "not sourced"
+        $miss++
+    }
+
+    $installPath = Join-Path $HOME "sharmory\functions.ps1"
+    if (Test-Path $installPath) {
+        Write-SharmoryDoctorLine "ok" "Install" $installPath
+        $ok++
+    } else {
+        Write-SharmoryDoctorLine "warn" "Install" "canonical path not found ($installPath)"
+        $warn++
+    }
+
+    Write-SharmoryDoctorLine "ok" "Shell" ("PowerShell {0}" -f $PSVersionTable.PSVersion)
+    $ok++
+
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        $gver = (git --version 2>$null)
+        $gname = (git config user.name 2>$null)
+        $gmail = (git config user.email 2>$null)
+        if ($gname -and $gmail) {
+            Write-SharmoryDoctorLine "ok" "Git" "$gver ($gname <$gmail>)"
+            $ok++
+        } else {
+            Write-SharmoryDoctorLine "warn" "Git" "$gver (user.name/email not set)"
+            $warn++
+        }
+    } else {
+        Write-SharmoryDoctorLine "miss" "Git" "not installed"
+        $miss++
+    }
+
+    $pubs = @(Get-ChildItem "$HOME\.ssh\*.pub" -ErrorAction SilentlyContinue)
+    if ($pubs.Count -gt 0) {
+        Write-SharmoryDoctorLine "ok" "SSH" "$($pubs.Count) public key(s) in ~/.ssh"
+        $ok++
+    } else {
+        Write-SharmoryDoctorLine "warn" "SSH" "no ~/.ssh/*.pub keys found"
+        $warn++
+    }
+
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        $dockerCmd = Get-Command docker
+        $daemonOk = $false
+        if ($dockerCmd.CommandType -eq "Function") {
+            $daemonOk = $true
+        } else {
+            docker info 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { $daemonOk = $true }
+        }
+        if ($daemonOk) {
+            Write-SharmoryDoctorLine "ok" "Docker" "daemon reachable"
+            $ok++
+        } else {
+            Write-SharmoryDoctorLine "warn" "Docker" "installed, daemon not reachable"
+            $warn++
+        }
+    } else {
+        Write-SharmoryDoctorLine "miss" "Docker" "not installed"
+        $miss++
+    }
+
+    if (Get-Command kubectl -ErrorAction SilentlyContinue) {
+        Write-SharmoryDoctorLine "ok" "kubectl" "installed"
+        $ok++
+    } else {
+        Write-SharmoryDoctorLine "miss" "kubectl" "not installed"
+        $miss++
+    }
+
+    Write-Output ""
+    Write-Output "Optional tools"
+    foreach ($tool in @("fzf", "jq", "eza", "tldr", "python", "go", "node", "openssl")) {
+        $check = $tool
+        if ($tool -eq "python" -and -not (Get-Command python -ErrorAction SilentlyContinue)) {
+            $check = "python3"
+        }
+        if (Get-Command $check -ErrorAction SilentlyContinue) {
+            Write-SharmoryDoctorLine "ok" $tool "installed"
+            $ok++
+        } else {
+            Write-SharmoryDoctorLine "miss" $tool (Get-SharmoryInstallHint $tool)
+            $miss++
+        }
+    }
+
+    Write-Output ""
+    Write-Output ("  {0} ok  {1} warn  {2} miss" -f $ok, $warn, $miss)
+    Write-Output ""
+    if (-not $loaded) { return }
+}
+
+function Test-SharmoryInteractiveInput {
+    try {
+        return -not [Console]::IsInputRedirected
+    } catch {
+        return $false
+    }
+}
+
+function sharmory {
+    param(
+        [Parameter(Position = 0)]
+        [string]$Command,
+        [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
+        [string[]]$Rest
+    )
+
+    if (-not $Command) {
+        if (-not (Test-SharmoryInteractiveInput)) {
+            Show-SharmoryUsage
+            Write-Output ""
+            Show-SharmoryList
+            return
+        }
+        Start-SharmoryHud
+        return
+    }
+
+    switch ($Command) {
+        { $_ -in @("-h", "--help", "help") } {
+            $name = if ($Rest -and $Rest.Count -gt 0) { $Rest[0] } else { $null }
+            Show-SharmoryHelp $name
+        }
+        "list" {
+            $cat = if ($Rest -and $Rest.Count -gt 0) { $Rest[0] } else { $null }
+            Show-SharmoryList $cat
+        }
+        "run" {
+            if (-not $Rest -or $Rest.Count -eq 0) {
+                Write-Output "Usage: sharmory run <name> [args...]"
+                return
+            }
+            $runName = $Rest[0]
+            $runArgs = @()
+            if ($Rest.Count -gt 1) { $runArgs = $Rest[1..($Rest.Count - 1)] }
+            Invoke-SharmoryRun $runName $runArgs
+        }
+        "doctor" { sharmory-doctor }
+        default {
+            Write-Output "Unknown subcommand: $Command"
+            Show-SharmoryUsage
+        }
+    }
+}
+
