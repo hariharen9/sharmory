@@ -28,7 +28,10 @@ sharmory list git         # one category
 sharmory help killport    # description + usage
 sharmory run now          # run a catalogued command
 sharmory doctor           # environment health check
+sharmory setup            # install optional tools (fzf, jq, eza, tldr)
 ```
+
+`sharmory-setup` is the same as `sharmory setup`. It only offers small CLI helpers — not Docker, Kubernetes, Go, Node, or Python. You can skip any tool.
 
 ---
 
@@ -114,7 +117,7 @@ standard alternative) if it is missing.
 - **Productivity** — `note`, `jsonpp`, `envload`, `ffind`, `cheat`, `calc`, `qr`
 - **CI/Jenkins** — `jenk-crumb`, `jenk-build`, `jenk-logs`, `jenk-jobs`
   (needs `JENKINS_URL`, `JENKINS_USER`, `JENKINS_TOKEN` env vars)
-- **Management** — `sharmory`, `sharmory doctor`, `sharmory-update`
+- **Management** — `sharmory`, `sharmory doctor`, `sharmory-setup`, `sharmory-update`
 
 ## Testing
 

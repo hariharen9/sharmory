@@ -476,6 +476,10 @@ Invoke-SharmoryTest "sharmory doctor" {
     if ($out -notmatch "Sharmory doctor") { throw "expected doctor report" }
     if ($out -notmatch "\[ok\].*Sharmory") { throw "expected Sharmory loaded" }
 }
+Invoke-SharmoryTest "sharmory-setup" {
+    $out = sharmory-setup | Out-String
+    if ($out -notmatch "Sharmory setup") { throw "expected setup report" }
+}
 Invoke-SharmoryTest "registry" {
     $missing = @()
     foreach ($row in Get-SharmoryRegistry) {

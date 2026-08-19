@@ -1556,6 +1556,7 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "jenkins"; Name = "jenk-jobs"; Description = "List Jenkins job names"; Usage = "jenk-jobs"; Deps = "" }
         [pscustomobject]@{ Category = "meta"; Name = "sharmory"; Description = "Interactive catalog and dispatcher"; Usage = "sharmory [list|help|run|doctor]"; Deps = "" }
         [pscustomobject]@{ Category = "meta"; Name = "sharmory-doctor"; Description = "Environment health check"; Usage = "sharmory doctor"; Deps = "" }
+        [pscustomobject]@{ Category = "meta"; Name = "sharmory-setup"; Description = "Install optional CLI tools (fzf, jq, ...)"; Usage = "sharmory-setup"; Deps = "" }
         [pscustomobject]@{ Category = "meta"; Name = "sharmory-update"; Description = "Download the latest Sharmory from GitHub"; Usage = "sharmory-update"; Deps = "" }
     )
 }
@@ -1567,13 +1568,14 @@ function Get-SharmoryRegistryEntry {
 
 function Show-SharmoryUsage {
     @"
-Usage: sharmory [list|help|run|doctor] [args]
+Usage: sharmory [list|help|run|doctor|setup] [args]
 
   sharmory                    Interactive HUD (fzf, or a numbered menu)
   sharmory list [category]    List commands
   sharmory help [name]        Explain a command (or this orchestrator)
   sharmory run <name> [args]  Run a catalogued command
   sharmory doctor             Environment health check
+  sharmory setup              Install optional CLI tools (fzf, jq, eza, tldr)
 
 Categories: files git docker k8s go node python net security system prod jenkins meta
 "@
@@ -1633,6 +1635,10 @@ function Invoke-SharmoryRun {
         sharmory-doctor
         return
     }
+    if ($Name -eq "sharmory-setup" -or $Name -eq "setup") {
+        sharmory-setup
+        return
+    }
     $row = Get-SharmoryRegistryEntry $Name
     if (-not $row) {
         Write-Output "Unknown command: $Name"
@@ -1663,6 +1669,10 @@ function Invoke-SharmoryPromptAndRun {
     }
     if ($Name -eq "sharmory-doctor" -or $Name -eq "doctor") {
         sharmory-doctor
+        return
+    }
+    if ($Name -eq "sharmory-setup" -or $Name -eq "setup") {
+        sharmory-setup
         return
     }
     $row = Get-SharmoryRegistryEntry $Name
@@ -1703,7 +1713,7 @@ function Start-SharmoryHudFzf {
 function Start-SharmoryHudMenu {
     $entries = @(Get-SharmoryRegistry)
     Write-Host "Sharmory HUD  (no fzf - numbered menu)"
-    Write-Host "Commands: list [cat] | help <name> | <number> | <name> | doctor | q"
+    Write-Host "Commands: list [cat] | help <name> | <number> | <name> | doctor | setup | q"
     Write-Host ""
     Write-Host ("  {0,3}  {1,-10} {2,-22} {3}" -f "#", "CATEGORY", "NAME", "DESCRIPTION")
     $i = 1
@@ -1722,6 +1732,7 @@ function Start-SharmoryHudMenu {
         switch -Regex ($cmd) {
             '^(q|quit|exit)$' { return }
             '^doctor$' { sharmory-doctor }
+            '^setup$' { sharmory-setup }
             '^list$' { Show-SharmoryList $rest }
             '^help$' {
                 if ($rest) { Show-SharmoryHelp $rest } else { Show-SharmoryUsage }
@@ -1761,6 +1772,102 @@ function Get-SharmoryInstallHint {
         "openssl" { "winget install ShiningLight.OpenSSL  |  brew install openssl" }
         default { "install $Tool via your package manager" }
     }
+}
+
+function Get-SharmorySetupWhy {
+    param([string]$Tool)
+    switch ($Tool) {
+        "fzf" { "fuzzy HUD, gstash, kdesc" }
+        "jq" { "jsonpp, Jenkins helpers" }
+        "eza" { "richer lsd listings" }
+        "tldr" { "cheat examples" }
+        default { "optional Sharmory helper" }
+    }
+}
+
+function Get-SharmoryWingetId {
+    param([string]$Tool)
+    switch ($Tool) {
+        "fzf" { "junegunn.fzf" }
+        "jq" { "jqlang.jq" }
+        "eza" { "eza-community.eza" }
+        "tldr" { "tldr" }
+        default { $Tool }
+    }
+}
+
+function Install-SharmoryOptionalTool {
+    param([string]$Tool)
+    $id = Get-SharmoryWingetId $Tool
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "-> winget install --id $id"
+        winget install --id $id -e --accept-package-agreements --accept-source-agreements
+        return
+    }
+    if (Get-Command scoop -ErrorAction SilentlyContinue) {
+        Write-Host "-> scoop install $Tool"
+        scoop install $Tool
+        return
+    }
+    if (Get-Command choco -ErrorAction SilentlyContinue) {
+        Write-Host "-> choco install $Tool -y"
+        choco install $Tool -y
+        return
+    }
+    Write-Host "No winget, scoop, or chocolatey found."
+    Write-Host ("  " + (Get-SharmoryInstallHint $Tool))
+}
+
+# Install optional CLI enhancers. Never installs Docker/K8s/Go/Node/Python.
+function sharmory-setup {
+    $tools = @("fzf", "jq", "eza", "tldr")
+    Write-Output "Sharmory setup"
+    Write-Output "Optional CLI tools only. Skips Docker, Kubernetes, Go, Node, and Python."
+    Write-Output ""
+
+    $missing = @()
+    foreach ($t in $tools) {
+        if (Get-Command $t -ErrorAction SilentlyContinue) {
+            Write-Output ("  [ok]   {0,-8} {1}" -f $t, (Get-SharmorySetupWhy $t))
+        } else {
+            Write-Output ("  [miss] {0,-8} {1}" -f $t, (Get-SharmorySetupWhy $t))
+            $missing += $t
+        }
+    }
+
+    if ($missing.Count -eq 0) {
+        Write-Output ""
+        Write-Output "Nothing to install."
+        return
+    }
+
+    if (-not (Test-SharmoryInteractiveInput)) {
+        Write-Output ""
+        Write-Output "Not a TTY - no installs. Re-run sharmory-setup in a terminal, or:"
+        foreach ($t in $missing) {
+            Write-Output ("  " + (Get-SharmoryInstallHint $t))
+        }
+        return
+    }
+
+    Write-Host ""
+    Write-Host "For each missing tool: [i]nstall  [s]kip  [a] skip all remaining  [q]uit"
+    foreach ($t in $missing) {
+        Write-Host ""
+        Write-Host "$t - $(Get-SharmorySetupWhy $t)"
+        Write-Host ("  hint: " + (Get-SharmoryInstallHint $t))
+        $choice = Read-Host "  [i/s/a/q]"
+        if ($null -eq $choice) { return }
+        $choice = $choice.Trim().ToLower()
+        switch -Regex ($choice) {
+            '^(i|install|y|yes)$' { Install-SharmoryOptionalTool $t }
+            '^(a|all)$' { Write-Host "Skipping remaining tools."; return }
+            '^(q|quit)$' { Write-Host "Stopped."; return }
+            default { Write-Host "Skipped $t." }
+        }
+    }
+    Write-Host ""
+    Write-Host "Done. New tools are available in new shells (or after refreshing PATH)."
 }
 
 function Write-SharmoryDoctorLine {
@@ -1917,6 +2024,7 @@ function sharmory {
             Invoke-SharmoryRun $runName $runArgs
         }
         "doctor" { sharmory-doctor }
+        "setup" { sharmory-setup }
         default {
             Write-Output "Unknown subcommand: $Command"
             Show-SharmoryUsage

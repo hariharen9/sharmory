@@ -41,7 +41,7 @@ unalias -- \
     note jsonpp envload ffind cheat calc qr \
     todo mkproject epoch diffjson retry \
     jenk-crumb jenk-build jenk-logs jenk-jobs \
-    sharmory-update sharmory-doctor sharmory \
+    sharmory-update sharmory-doctor sharmory-setup sharmory \
     2>/dev/null; true
 
 # Detect OS once so functions can branch cheaply
@@ -1938,6 +1938,7 @@ _SHARMORY_REGISTRY=(
     'jenkins^jenk-jobs^List Jenkins job names^jenk-jobs^jq'
     'meta^sharmory^Interactive catalog and dispatcher^sharmory [list|help|run|doctor]^'
     'meta^sharmory-doctor^Environment health check^sharmory doctor^'
+    'meta^sharmory-setup^Install optional CLI tools (fzf, jq, ...)^sharmory-setup^'
     'meta^sharmory-update^Download the latest Sharmory from GitHub^sharmory-update^'
 )
 
@@ -1978,13 +1979,14 @@ _sharmory_registry_check() {
 
 _sharmory_self_usage() {
     cat <<'EOF'
-Usage: sharmory [list|help|run|doctor] [args]
+Usage: sharmory [list|help|run|doctor|setup] [args]
 
   sharmory                    Interactive HUD (fzf, or a numbered menu)
   sharmory list [category]    List commands
   sharmory help [name]        Explain a command (or this orchestrator)
   sharmory run <name> [args]  Run a catalogued command
   sharmory doctor             Environment health check
+  sharmory setup              Install optional CLI tools (fzf, jq, eza, tldr)
 
 Categories: files git docker k8s go node python net security system prod jenkins meta
 EOF
@@ -2044,6 +2046,10 @@ _sharmory_run() {
             sharmory-doctor
             return $?
             ;;
+        sharmory-setup|setup)
+            sharmory-setup
+            return $?
+            ;;
     esac
     if ! _sharmory_registry_lookup "$name"; then
         echo "Unknown command: $name"
@@ -2068,6 +2074,10 @@ _sharmory_prompt_and_run() {
     fi
     if [[ "$name" == "sharmory-doctor" || "$name" == "doctor" ]]; then
         sharmory-doctor
+        return $?
+    fi
+    if [[ "$name" == "sharmory-setup" || "$name" == "setup" ]]; then
+        sharmory-setup
         return $?
     fi
     if ! _sharmory_registry_lookup "$name"; then
@@ -2126,7 +2136,7 @@ _sharmory_print_numbered() {
 _sharmory_hud_menu() {
     local names=() line cmd rest idx row
     echo "Sharmory HUD  (no fzf — numbered menu)"
-    echo "Commands: list [cat] | help <name> | <number> | <name> | doctor | q"
+    echo "Commands: list [cat] | help <name> | <number> | <name> | doctor | setup | q"
     echo ""
     _sharmory_print_numbered
     for row in "${_SHARMORY_REGISTRY[@]}"; do
@@ -2145,6 +2155,7 @@ _sharmory_hud_menu() {
         case "$cmd" in
             q|quit|exit) return 0 ;;
             doctor) sharmory-doctor ;;
+            setup) sharmory-setup ;;
             list) _sharmory_list "$rest" ;;
             help)
                 if [[ -n "$rest" ]]; then
@@ -2305,6 +2316,128 @@ sharmory-doctor() {
     return 0
 }
 
+_sharmory_setup_why() {
+    case "$1" in
+        fzf) echo "fuzzy HUD, gswitch, gstash, fcd, kdesc, ..." ;;
+        jq) echo "jsonpp, npmscripts, diffjson, Jenkins helpers" ;;
+        eza) echo "richer lsd listings" ;;
+        tldr) echo "cheat examples" ;;
+        entr) echo "watchrun and gowatch (file watchers)" ;;
+        *) echo "optional Sharmory helper" ;;
+    esac
+}
+
+_sharmory_setup_install() {
+    local tool=$1
+    local os; os=$(_sharmory_os)
+    if [[ "$os" == "macos" ]]; then
+        if command -v brew &>/dev/null; then
+            echo "-> brew install $tool"
+            brew install "$tool"
+            return $?
+        fi
+        echo "Homebrew is not installed. Install from https://brew.sh then re-run sharmory-setup."
+        echo "  $(_sharmory_hint "$tool")"
+        return 1
+    fi
+    if command -v brew &>/dev/null; then
+        echo "-> brew install $tool"
+        brew install "$tool"
+        return $?
+    fi
+    if command -v apt-get &>/dev/null; then
+        echo "-> sudo apt-get install -y $tool"
+        sudo apt-get install -y "$tool"
+        return $?
+    fi
+    if command -v dnf &>/dev/null; then
+        echo "-> sudo dnf install -y $tool"
+        sudo dnf install -y "$tool"
+        return $?
+    fi
+    if command -v pacman &>/dev/null; then
+        echo "-> sudo pacman -S --noconfirm $tool"
+        sudo pacman -S --noconfirm "$tool"
+        return $?
+    fi
+    echo "No supported package manager found (brew, apt, dnf, pacman)."
+    echo "  $(_sharmory_hint "$tool")"
+    return 1
+}
+
+# Install optional CLI enhancers (fzf, jq, eza, tldr, entr). Never installs Docker/K8s/Go/Node/Python.
+sharmory-setup() {
+    local tools=(fzf jq eza tldr)
+    local os; os=$(_sharmory_os)
+    if [[ "$os" == "macos" || "$os" == "linux" ]]; then
+        tools+=(entr)
+    fi
+
+    echo "Sharmory setup"
+    echo "Optional CLI tools only. Skips Docker, Kubernetes, Go, Node, and Python."
+    echo ""
+
+    local missing=() t
+    for t in "${tools[@]}"; do
+        if command -v "$t" &>/dev/null; then
+            printf "  [ok]   %-8s %s\n" "$t" "$(_sharmory_setup_why "$t")"
+        elif [[ "$t" == "entr" ]] && command -v fswatch &>/dev/null; then
+            printf "  [ok]   %-8s %s\n" "fswatch" "(covers watchrun instead of entr)"
+        else
+            printf "  [miss] %-8s %s\n" "$t" "$(_sharmory_setup_why "$t")"
+            missing+=("$t")
+        fi
+    done
+
+    if (( ${#missing} == 0 )); then
+        echo ""
+        echo "Nothing to install."
+        return 0
+    fi
+
+    if [[ ! -t 0 ]]; then
+        echo ""
+        echo "Not a TTY — no installs. Re-run sharmory-setup in a terminal, or:"
+        for t in "${missing[@]}"; do
+            echo "  $(_sharmory_hint "$t")"
+        done
+        return 0
+    fi
+
+    echo ""
+    echo "For each missing tool: [i]nstall  [s]kip  [a] skip all remaining  [q]uit"
+    local choice
+    for t in "${missing[@]}"; do
+        echo ""
+        echo "$t — $(_sharmory_setup_why "$t")"
+        echo "  hint: $(_sharmory_hint "$t")"
+        echo -n "  [i/s/a/q] "
+        IFS= read -r choice || return 0
+        choice=${choice:l}
+        case "$choice" in
+            i|install|y|yes)
+                _sharmory_setup_install "$t" || echo "Install of $t failed (skipped)."
+                ;;
+            a|all)
+                echo "Skipping remaining tools."
+                return 0
+                ;;
+            q|quit)
+                echo "Stopped."
+                return 0
+                ;;
+            s|skip|n|no|"")
+                echo "Skipped $t."
+                ;;
+            *)
+                echo "Skipped $t."
+                ;;
+        esac
+    done
+    echo ""
+    echo "Done. New tools are available in new shells (or after refreshing PATH)."
+}
+
 sharmory() {
     local sub=${1:-}
     case "$sub" in
@@ -2331,6 +2464,9 @@ sharmory() {
             ;;
         doctor)
             sharmory-doctor
+            ;;
+        setup)
+            sharmory-setup
             ;;
         *)
             echo "Unknown subcommand: $sub"

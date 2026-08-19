@@ -726,6 +726,7 @@ run  "sharmory list git"  "sharmory list git | grep -q gitundo"
 run  "sharmory help mkcd" "sharmory help mkcd | grep -q Usage"
 run  "sharmory run now"   "sharmory run now"
 run  "sharmory doctor"    "sharmory doctor | grep -q 'Sharmory doctor'"
+run  "sharmory-setup"     "sharmory-setup | grep -q 'Sharmory setup'"
 run  "registry"          "_sharmory_registry_check"
 
 #########################################################################
