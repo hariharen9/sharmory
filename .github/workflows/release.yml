@@ -152,8 +152,8 @@ jobs:
     name: Publish PyPI
     needs: metadata
     runs-on: ubuntu-latest
+    if: ${{ secrets.PYPI_API_TOKEN != '' }}
     permissions:
-      id-token: write
       contents: read
     steps:
       - uses: actions/checkout@v4
@@ -168,4 +168,5 @@ jobs:
           python -m build
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
-        continue-on-error: true
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
