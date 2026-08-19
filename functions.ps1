@@ -185,6 +185,74 @@ function clipcopy {
     Write-Host "Copied contents of $Path"
 }
 
+# Recursive tree listing; uses `tree` if present
+# Usage: treelist [dir] [depth]
+function treelist {
+    param([string]$Path = ".", [int]$Depth = 0)
+    if (-not (Test-Path $Path)) {
+        Write-Host "Not found: $Path"
+        return
+    }
+    if ((Get-Command tree -CommandType Application -ErrorAction SilentlyContinue) -and $Depth -eq 0) {
+        tree /F $Path
+        return
+    }
+    $base = (Resolve-Path $Path).Path.TrimEnd("\")
+    Get-ChildItem $base -Recurse -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\.git(\\|$)' } |
+        ForEach-Object {
+            $rel = $_.FullName.Substring($base.Length).TrimStart("\")
+            $level = if ($rel) { $rel.Split("\").Count } else { 0 }
+            if ($Depth -gt 0 -and $level -gt $Depth) { return }
+            Write-Host (("  " * $level) + $_.Name)
+        }
+}
+
+# Show the N most recently modified files in the current directory tree
+# Usage: recent [n]
+function recent {
+    param([int]$Count = 10)
+    Get-ChildItem -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\.git\\' } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First $Count -ExpandProperty FullName
+}
+
+# Swap two filenames using a temp file
+# Usage: swap <file-a> <file-b>
+function swap {
+    param(
+        [Parameter(Mandatory)][string]$PathA,
+        [Parameter(Mandatory)][string]$PathB
+    )
+    if (-not (Test-Path $PathA)) { Write-Host "Not found: $PathA"; return }
+    if (-not (Test-Path $PathB)) { Write-Host "Not found: $PathB"; return }
+    $tmp = "$PathA.$([guid]::NewGuid().ToString('N').Substring(0, 8)).swaptmp"
+    Move-Item -LiteralPath $PathA -Destination $tmp
+    Move-Item -LiteralPath $PathB -Destination $PathA
+    Move-Item -LiteralPath $tmp -Destination $PathB
+    Write-Host "Swapped: $PathA <-> $PathB"
+}
+
+# Move a file or directory to the Recycle Bin
+# Usage: trash <file-or-dir>
+function trash {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path $Path)) {
+        Write-Host "Not found: $Path"
+        return
+    }
+    $full = (Resolve-Path $Path).Path
+    $item = Get-Item -LiteralPath $full
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    if ($item.PSIsContainer) {
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($full, 'OnlyErrorDialogs', 'SendToRecycleBin')
+    } else {
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($full, 'OnlyErrorDialogs', 'SendToRecycleBin')
+    }
+    Write-Host "Trashed: $Path"
+}
+
 #########################################################################
 # 2. GIT
 #########################################################################
@@ -309,6 +377,82 @@ function gitignore {
     Write-Host "Appended $Langs templates to .gitignore"
 }
 
+# Interactive git stash picker — pop, apply, or drop via fzf
+function gstash {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $entry = git stash list | fzf --prompt="stash> "
+    if (-not $entry) { return }
+    $stashRef = ($entry -split ":")[0]
+    $action = Read-Host "Action for $stashRef - (p)op  (a)pply  (d)rop  [p/a/d]"
+    switch ($action) {
+        "p" { git stash pop $stashRef }
+        "a" { git stash apply $stashRef }
+        "d" { git stash drop $stashRef }
+        default { Write-Host "Aborted." }
+    }
+}
+
+# Interactive rebase N commits
+# Usage: grebase [n]
+function grebase {
+    param([string]$Count)
+    if (-not $Count) {
+        $Count = Read-Host "How many commits back do you want to rebase?"
+    }
+    if ($Count -notmatch '^[0-9]+$') {
+        Write-Host "Expected a positive integer, got: $Count"
+        return
+    }
+    git rebase -i "HEAD~$Count"
+}
+
+# Open the current repo's origin URL in the browser
+function gopen {
+    $remote = git remote get-url origin 2>$null
+    if (-not $remote) {
+        Write-Host "No 'origin' remote found."
+        return
+    }
+    $url = $remote.Trim()
+    if ($url -match '^git@([^:]+):(.+)$') {
+        $url = "https://$($Matches[1])/$($Matches[2])"
+    }
+    $url = $url -replace '\.git$', ''
+    Write-Host "Opening: $url"
+    Start-Process $url
+}
+
+# Rename a git branch locally and on the remote
+# Usage: gitbranch-rename <old-name> <new-name>
+function gitbranch-rename {
+    param(
+        [Parameter(Mandatory)][string]$OldName,
+        [Parameter(Mandatory)][string]$NewName
+    )
+    git branch -m $OldName $NewName
+    git push origin --delete $OldName 2>$null
+    git push origin -u $NewName
+    Write-Host "Renamed '$OldName' -> '$NewName' locally and on remote."
+}
+
+# Pretty one-line graph log
+function gitlog-graph {
+    git log --graph --oneline --decorate --all --color @args
+}
+
+# Prune remotes, delete merged branches, tidy Go module if present
+function gcleanup {
+    Write-Host "==> gitprune"
+    gitprune
+    Write-Host "==> branchclean"
+    branchclean
+    if (Test-Path go.mod) {
+        Write-Host "==> goclean"
+        goclean
+    }
+    Write-Host "Done."
+}
+
 #########################################################################
 # 3. DOCKER & KUBERNETES
 #########################################################################
@@ -361,6 +505,54 @@ function ktop {
 # Describe events for the current namespace, most recent last
 function kevents {
     kubectl get events --sort-by='.lastTimestamp'
+}
+
+# Print all environment variables of a running container
+# Usage: denv <container-name-or-id>
+function denv {
+    param([Parameter(Mandatory)][string]$Container)
+    docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' $Container
+}
+
+# Build a Docker image; tag defaults to the current directory name
+# Usage: dbuild [tag]
+function dbuild {
+    param([string]$Tag = (Split-Path (Get-Location) -Leaf))
+    Write-Host "Building image: $Tag"
+    docker build -t $Tag .
+}
+
+# Set the current kubectl namespace
+# Usage: kns <namespace>
+function kns {
+    param([Parameter(Mandatory)][string]$Namespace)
+    kubectl config set-context --current --namespace=$Namespace
+    Write-Host "Namespace set to: $Namespace"
+}
+
+# Describe a pod (fzf picker, or pass a name)
+# Usage: kdesc [pod-name]
+function kdesc {
+    param([string]$Pod)
+    if (-not $Pod) {
+        if (-not (Test-SharmoryDependency fzf)) { return }
+        $picked = kubectl get pods -o name | fzf --prompt="describe pod> "
+        if (-not $picked) { return }
+        $Pod = $picked -replace '^pod/', ''
+    }
+    kubectl describe pod $Pod
+}
+
+# Forward a local port to a pod
+# Usage: kport <local-port> <pod-name> <remote-port>
+function kport {
+    param(
+        [Parameter(Mandatory)][int]$LocalPort,
+        [Parameter(Mandatory)][string]$Pod,
+        [Parameter(Mandatory)][int]$RemotePort
+    )
+    Write-Host "Forwarding localhost:$LocalPort -> pod/$Pod`:$RemotePort (Ctrl-C to stop)"
+    kubectl port-forward "pod/$Pod" "${LocalPort}:${RemotePort}"
 }
 
 #########################################################################
@@ -581,6 +773,86 @@ function shorten {
     Invoke-RestMethod ('https://is.gd/create.php?format=simple&url=' + $Url)
 }
 
+# Send a few pings and print reachability
+# Usage: pingcheck <host>
+function pingcheck {
+    param([Parameter(Mandatory)][string]$HostName)
+    Write-Host "Pinging $HostName (5 packets)..."
+    Test-Connection -ComputerName $HostName -Count 5 -ErrorAction SilentlyContinue
+}
+
+# List Host entries from ~/.ssh/config
+function sshconfig {
+    $cfg = Join-Path $HOME ".ssh\config"
+    if (-not (Test-Path $cfg)) {
+        Write-Host "No ~/.ssh/config found."
+        return
+    }
+    $hostName = $null; $hostname = $null; $user = $null; $port = $null
+    function Write-SharmorySshHost {
+        if ($script:SshHost -and $script:SshHostname) {
+            $who = if ($script:SshUser) { "$($script:SshUser)@" } else { "" }
+            $p = if ($script:SshPort) { ":$($script:SshPort)" } else { "" }
+            Write-Host ("  {0,-20} -> {1}{2}{3}" -f $script:SshHost, $who, $script:SshHostname, $p)
+        }
+    }
+    $script:SshHost = $null; $script:SshHostname = $null; $script:SshUser = $null; $script:SshPort = $null
+    Get-Content $cfg | ForEach-Object {
+        $line = $_.TrimEnd()
+        if ($line -match '^[Hh]ost\s+(\S+)') {
+            Write-SharmorySshHost
+            $script:SshHost = $Matches[1]
+            $script:SshHostname = $null; $script:SshUser = $null; $script:SshPort = $null
+        } elseif ($line -match '^\s*HostName\s+(\S+)') {
+            $script:SshHostname = $Matches[1]
+        } elseif ($line -match '^\s*User\s+(\S+)') {
+            $script:SshUser = $Matches[1]
+        } elseif ($line -match '^\s*Port\s+(\S+)') {
+            $script:SshPort = $Matches[1]
+        }
+    }
+    Write-SharmorySshHost
+}
+
+# Show HTTP response headers for a URL
+# Usage: headers <url>
+function headers {
+    param([Parameter(Mandatory)][string]$Url)
+    $resp = Invoke-WebRequest -Uri $Url -Method Head -UseBasicParsing
+    $resp.Headers.GetEnumerator() | ForEach-Object { "{0}: {1}" -f $_.Key, $_.Value }
+}
+
+# Toggle http_proxy / https_proxy env vars
+# Usage: proxy on [host:port]  |  proxy off  |  proxy status
+function proxy {
+    param([string]$Action = "status", [string]$Address)
+    switch ($Action) {
+        "on" {
+            if (-not $Address) { $Address = "http://127.0.0.1:8080" }
+            $env:http_proxy = $Address
+            $env:https_proxy = $Address
+            $env:HTTP_PROXY = $Address
+            $env:HTTPS_PROXY = $Address
+            $env:no_proxy = "localhost,127.0.0.1,::1"
+            $env:NO_PROXY = $env:no_proxy
+            Write-Host "Proxy ON -> $Address"
+        }
+        "off" {
+            Remove-Item Env:http_proxy, Env:https_proxy, Env:HTTP_PROXY, Env:HTTPS_PROXY, Env:no_proxy, Env:NO_PROXY -ErrorAction SilentlyContinue
+            Write-Host "Proxy OFF."
+        }
+        "status" {
+            $hp = $env:http_proxy; if (-not $hp) { $hp = "<not set>" }
+            $hsp = $env:https_proxy; if (-not $hsp) { $hsp = "<not set>" }
+            Write-Host "http_proxy  = $hp"
+            Write-Host "https_proxy = $hsp"
+        }
+        default {
+            Write-Host "Usage: proxy <on [host:port]|off|status>"
+        }
+    }
+}
+
 #########################################################################
 # 8. SECURITY & ENCODING
 #########################################################################
@@ -644,6 +916,85 @@ function genuuid {
     [guid]::NewGuid().ToString()
 }
 
+# Decode a JWT header and payload (no signature verification)
+# Usage: jwtdecode <token>
+function jwtdecode {
+    param([Parameter(Mandatory)][string]$Token)
+    $parts = $Token.Split(".")
+    if ($parts.Count -lt 2) {
+        Write-Host "Not a JWT."
+        return
+    }
+    function ConvertFrom-SharmoryJwtPart([string]$Part) {
+        $s = $Part.Replace("-", "+").Replace("_", "/")
+        switch ($s.Length % 4) {
+            2 { $s += "==" }
+            3 { $s += "=" }
+        }
+        [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s))
+    }
+    Write-Host "=== Header ==="
+    $header = ConvertFrom-SharmoryJwtPart $parts[0]
+    $payload = ConvertFrom-SharmoryJwtPart $parts[1]
+    try { $header | ConvertFrom-Json | ConvertTo-Json -Depth 10 } catch { $header }
+    Write-Host "=== Payload ==="
+    try { $payload | ConvertFrom-Json | ConvertTo-Json -Depth 10 } catch { $payload }
+}
+
+# Lint a .env file for empty values, dupes, unquoted spaces, and plaintext secrets
+# Usage: dotenv-check [file]
+function dotenv-check {
+    param([string]$Path = ".env")
+    if (-not (Test-Path $Path)) {
+        Write-Host "No such file: $Path"
+        return
+    }
+    $issues = 0
+    $seen = @{}
+    $lineno = 0
+    $script:DotenvIssues = 0
+    Get-Content $Path | ForEach-Object {
+        $lineno++
+        $line = $_
+        if ($line -match '^\s*$' -or $line -match '^\s*#') { return }
+        if ($line -notmatch '^[A-Za-z_][A-Za-z0-9_]*=') {
+            Write-Host ("  [WARN] line {0}: not a valid KEY=value pair: {1}" -f $lineno, $line)
+            $script:DotenvIssues++
+            return
+        }
+        $key = $line.Substring(0, $line.IndexOf("="))
+        $value = $line.Substring($line.IndexOf("=") + 1)
+        if ($seen.ContainsKey($key)) {
+            Write-Host ("  [DUPE] line {0}: duplicate key '{1}'" -f $lineno, $key)
+            $script:DotenvIssues++
+        }
+        $seen[$key] = $true
+        if ([string]::IsNullOrEmpty($value)) {
+            Write-Host ("  [EMPTY] line {0}: '{1}' has no value" -f $lineno, $key)
+            $script:DotenvIssues++
+            return
+        }
+        $quoted = ($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))
+        if (-not $quoted -and $value -match '\s') {
+            Write-Host ("  [QUOTE] line {0}: '{1}' value contains spaces but is not quoted" -f $lineno, $key)
+            $script:DotenvIssues++
+        }
+        if ($key -match 'SECRET|PASSWORD|PASSWD|TOKEN|API_KEY|APIKEY|PRIVATE_KEY|AUTH') {
+            if (-not $quoted -and $value -notmatch '^\$\{') {
+                Write-Host ("  [SECRET] line {0}: '{1}' looks like a secret - consider quoting or using a vault" -f $lineno, $key)
+                $script:DotenvIssues++
+            }
+        }
+    }
+    $issues = $script:DotenvIssues
+    $script:DotenvIssues = 0
+    if (-not $issues) {
+        Write-Host "  $Path looks clean (no issues found)."
+    } else {
+        Write-Host ("  {0} issue(s) found in {1}" -f $issues, $Path)
+    }
+}
+
 #########################################################################
 # 9. SYSTEM & PROCESS
 #########################################################################
@@ -683,6 +1034,99 @@ function timer {
     }
     Write-Host "`r$Label`: done!            "
     [console]::beep(800, 400)
+}
+
+# Disk usage summary for a path
+# Usage: diskusage [path]
+function diskusage {
+    param([string]$Path = ".")
+    Write-Host "=== Filesystem usage ==="
+    Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{N = "UsedGB"; E = { [math]::Round(($_.Used / 1GB), 2) } }, @{N = "FreeGB"; E = { [math]::Round(($_.Free / 1GB), 2) } } -AutoSize
+    Write-Host "=== Largest directories under $Path ==="
+    Get-ChildItem $Path -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $size = (Get-ChildItem $_.FullName -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+        [PSCustomObject]@{ Name = $_.Name; SizeMB = [math]::Round(($size / 1MB), 2) }
+    } | Sort-Object SizeMB -Descending | Select-Object -First 20 | Format-Table -AutoSize
+}
+
+# Diff two .env files by key
+# Usage: envdiff <file1> <file2>
+function envdiff {
+    param(
+        [Parameter(Mandatory)][string]$FileA,
+        [Parameter(Mandatory)][string]$FileB
+    )
+    if (-not (Test-Path $FileA)) { Write-Host "Not found: $FileA"; return }
+    if (-not (Test-Path $FileB)) { Write-Host "Not found: $FileB"; return }
+    $parse = {
+        param($p)
+        $h = @{}
+        Get-Content $p | ForEach-Object {
+            if ($_ -match '^\s*$' -or $_ -match '^\s*#') { return }
+            if ($_ -notmatch '^[A-Za-z_][A-Za-z0-9_]*=') { return }
+            $h[$_.Substring(0, $_.IndexOf("="))] = $_.Substring($_.IndexOf("=") + 1)
+        }
+        $h
+    }
+    $a = & $parse $FileA
+    $b = & $parse $FileB
+    $changed = 0
+    foreach ($k in $a.Keys) {
+        if (-not $b.ContainsKey($k)) {
+            Write-Host ("  - {0}={1}" -f $k, $a[$k])
+            $changed++
+        } elseif ($a[$k] -ne $b[$k]) {
+            Write-Host ("  ~ {0}: {1} -> {2}" -f $k, $a[$k], $b[$k])
+            $changed++
+        }
+    }
+    foreach ($k in $b.Keys) {
+        if (-not $a.ContainsKey($k)) {
+            Write-Host ("  + {0}={1}" -f $k, $b[$k])
+            $changed++
+        }
+    }
+    if ($changed -eq 0) {
+        Write-Host "  No differences found."
+    } else {
+        Write-Host ("  {0} difference(s) between {1} and {2}" -f $changed, $FileA, $FileB)
+    }
+}
+
+# Listening TCP ports with process name and PID
+function ports {
+    Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+        Sort-Object LocalPort |
+        ForEach-Object {
+            $proc = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
+            [PSCustomObject]@{
+                Proto   = "TCP"
+                Port    = $_.LocalPort
+                Process = $proc.ProcessName
+                PID     = $_.OwningProcess
+            }
+        } | Format-Table -AutoSize
+}
+
+# One-screen system summary
+function sysinfo {
+    $os = Get-CimInstance Win32_OperatingSystem
+    $cs = Get-CimInstance Win32_ComputerSystem
+    $cpuInfo = Get-CimInstance Win32_Processor | Select-Object -First 1
+    Write-Host "======================================="
+    Write-Host "          System Information"
+    Write-Host "======================================="
+    Write-Host ("  OS       : {0}" -f $os.Caption)
+    Write-Host ("  Version  : {0}" -f $os.Version)
+    Write-Host ("  CPU      : {0}" -f $cpuInfo.Name)
+    Write-Host ("  Cores    : {0} logical" -f $cs.NumberOfLogicalProcessors)
+    Write-Host ("  RAM      : {0:N1} GB total" -f ($cs.TotalPhysicalMemory / 1GB))
+    Write-Host ("  Uptime   : {0}" -f (New-TimeSpan -Start $os.LastBootUpTime -End (Get-Date)).ToString())
+    Write-Host ""
+    Write-Host "  Disk usage:"
+    Get-PSDrive -PSProvider FileSystem | ForEach-Object {
+        Write-Host ("    {0}: used {1:N1} GB / free {2:N1} GB" -f $_.Name, ($_.Used / 1GB), ($_.Free / 1GB))
+    }
 }
 
 #########################################################################
@@ -775,6 +1219,161 @@ function qr {
     (Invoke-WebRequest "https://qrenco.de/$Text" -UseBasicParsing).Content
 }
 
+# Append a timestamped entry to ~/todo.md; no args lists todos
+# Usage: todo [text]
+function todo {
+    param([string]$Text)
+    $file = Join-Path $HOME "todo.md"
+    if (-not $Text) {
+        if (Test-Path $file) { Get-Content $file } else { Write-Host 'No todo file yet. Run: todo [text]' }
+        return
+    }
+    if (-not (Test-Path $file)) { "# Todos`n" | Out-File -Encoding utf8 $file }
+    ("- [ ] {0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm"), $Text) | Out-File -Append -Encoding utf8 $file
+    Write-Host "Added: $Text"
+}
+
+# Scaffold a project directory with README, .gitignore, and .env.example
+# Usage: mkproject <name> [go|node|python]
+function mkproject {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [string]$Template = "bare"
+    )
+    if (Test-Path $Name) {
+        Write-Host "Directory '$Name' already exists."
+        return
+    }
+    New-Item -ItemType Directory -Force -Path $Name | Out-Null
+    Set-Location $Name
+    @"
+# $Name
+
+> Add project description here.
+
+## Getting Started
+
+## License
+
+MIT
+"@ | Out-File -Encoding utf8 README.md
+    @"
+# Copy this file to .env and fill in your values
+
+APP_ENV=development
+LOG_LEVEL=info
+"@ | Out-File -Encoding utf8 .env.example
+
+    switch ($Template) {
+        "go" {
+            "*.out`n*.test`nvendor/`n*.log`n.env`n" | Out-File -Encoding utf8 .gitignore
+            go mod init $Name 2>$null
+            @'
+package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("Hello!")
+}
+'@ | Out-File -Encoding utf8 main.go
+        }
+        "node" {
+            "node_modules/`ndist/`n.env`n*.log`n" | Out-File -Encoding utf8 .gitignore
+            (@{ name = $Name; version = "0.1.0"; description = ""; main = "index.js"; scripts = @{ start = "node index.js" } } | ConvertTo-Json) | Out-File -Encoding utf8 package.json
+            "console.log('Hello from $Name!');" | Out-File -Encoding utf8 index.js
+        }
+        "python" {
+            "venv/`n__pycache__/`n*.pyc`n.env`n*.egg-info/`ndist/`nbuild/`n" | Out-File -Encoding utf8 .gitignore
+            "# $Name`n`nrequirements:`n" | Out-File -Encoding utf8 requirements.txt
+            @'
+def main():
+    print("Hello!")
+
+if __name__ == "__main__":
+    main()
+'@ | Out-File -Encoding utf8 main.py
+        }
+        default {
+            ".env`n*.log`n" | Out-File -Encoding utf8 .gitignore
+        }
+    }
+
+    git init -q
+    git add -A
+    git commit -q -m "Initial commit ($Template)"
+    Write-Host "Project '$Name' created with template '$Template'"
+    Write-Host "   $(Get-Location)"
+}
+
+# Convert between Unix epoch and human-readable datetime
+# Usage: epoch | epoch <epoch> | epoch <date>
+function epoch {
+    param([string]$Value)
+    if (-not $Value) {
+        $now = [DateTimeOffset]::Now
+        Write-Host ("Epoch   : {0}" -f $now.ToUnixTimeSeconds())
+        Write-Host ("Human   : {0}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz"))
+        return
+    }
+    if ($Value -match '^[0-9]+$') {
+        [DateTimeOffset]::FromUnixTimeSeconds([int64]$Value).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss zzz")
+    } else {
+        ([DateTimeOffset]::Parse($Value)).ToUnixTimeSeconds()
+    }
+}
+
+# Diff two JSON files after normalizing
+# Usage: diffjson <file-a> <file-b>
+function diffjson {
+    param(
+        [Parameter(Mandatory)][string]$FileA,
+        [Parameter(Mandatory)][string]$FileB
+    )
+    if (-not (Test-Path $FileA)) { Write-Host "Not found: $FileA"; return }
+    if (-not (Test-Path $FileB)) { Write-Host "Not found: $FileB"; return }
+    $ja = (Get-Content $FileA -Raw | ConvertFrom-Json | ConvertTo-Json -Depth 20)
+    $jb = (Get-Content $FileB -Raw | ConvertFrom-Json | ConvertTo-Json -Depth 20)
+    if ($ja -eq $jb) { return }
+    Compare-Object ($ja -split "`n") ($jb -split "`n") | ForEach-Object {
+        if ($_.SideIndicator -eq "<=") { Write-Host ("- {0}" -f $_.InputObject) }
+        else { Write-Host ("+ {0}" -f $_.InputObject) }
+    }
+}
+
+# Retry a command with exponential backoff
+# Usage: retry <max-attempts> <command> [args...]
+function retry {
+    param(
+        [Parameter(Mandatory, Position = 0)][int]$MaxAttempts,
+        [Parameter(Mandatory, Position = 1)][string]$CommandName,
+        [Parameter(ValueFromRemainingArguments = $true)][string[]]$RetryArgs
+    )
+    $attempt = 1
+    $wait = 1
+    while ($true) {
+        $ok = $true
+        try {
+            if ($RetryArgs) { & $CommandName @RetryArgs } else { & $CommandName }
+            if (-not $?) { $ok = $false }
+        } catch {
+            $ok = $false
+        }
+        if ($ok) {
+            if ($attempt -gt 1) { Write-Host "Succeeded on attempt $attempt." }
+            return
+        }
+        if ($attempt -ge $MaxAttempts) {
+            Write-Host ("Command failed after {0} attempt(s): {1}" -f $MaxAttempts, $CommandName)
+            return
+        }
+        Write-Host ("Attempt {0}/{1} failed. Retrying in {2}s..." -f $attempt, $MaxAttempts, $wait)
+        Start-Sleep -Seconds $wait
+        $wait = $wait * 2
+        $attempt++
+    }
+}
+
 #########################################################################
 # 11. CI / JENKINS
 # (requires $env:JENKINS_URL, $env:JENKINS_USER, $env:JENKINS_TOKEN to be set)
@@ -856,6 +1455,10 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "files"; Name = "bak"; Description = "Timestamped backup copy of a file"; Usage = "bak <file>"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "cwd"; Description = "Copy the working directory path to the clipboard"; Usage = "cwd"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "clipcopy"; Description = "Copy a file contents to the clipboard"; Usage = "clipcopy <file>"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "treelist"; Description = "Recursive tree listing"; Usage = "treelist [dir] [depth]"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "recent"; Description = "Most recently modified files"; Usage = "recent [n]"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "swap"; Description = "Swap two filenames"; Usage = "swap <file-a> <file-b>"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "trash"; Description = "Move a path to the Recycle Bin"; Usage = "trash <file-or-dir>"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "gitundo"; Description = "Undo last commit, keep changes staged"; Usage = "gitundo"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "branchclean"; Description = "Delete local branches already merged"; Usage = "branchclean"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "branchage"; Description = "Local branches sorted by last commit date"; Usage = "branchage"; Deps = "" }
@@ -870,13 +1473,24 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "git"; Name = "gitsize"; Description = "Size of the .git directory"; Usage = "gitsize"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "gitconflicts"; Description = "List unresolved merge conflict files"; Usage = "gitconflicts"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "gitignore"; Description = "Append a gitignore.io template"; Usage = "gitignore <lang1,lang2,...>"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gstash"; Description = "Interactive stash picker"; Usage = "gstash"; Deps = "fzf" }
+        [pscustomobject]@{ Category = "git"; Name = "grebase"; Description = "Interactive rebase N commits"; Usage = "grebase [n]"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gopen"; Description = "Open the origin remote in a browser"; Usage = "gopen"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gitbranch-rename"; Description = "Rename a branch locally and on the remote"; Usage = "gitbranch-rename <old> <new>"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gitlog-graph"; Description = "Pretty one-line graph log"; Usage = "gitlog-graph"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gcleanup"; Description = "Prune remotes, delete merged branches, tidy Go"; Usage = "gcleanup"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dockernuke"; Description = "Force stop and remove a container"; Usage = "dockernuke <container>"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dockerclean-images"; Description = "Remove dangling Docker images"; Usage = "dockerclean-images"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dclean"; Description = "Prune unused Docker data"; Usage = "dclean"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dockerlogs"; Description = "Tail container logs with timestamps"; Usage = "dockerlogs <container>"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dockersizes"; Description = "Human-readable local image sizes"; Usage = "dockersizes"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "denv"; Description = "Print a container environment"; Usage = "denv <container>"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "dbuild"; Description = "Build an image tagged from the directory name"; Usage = "dbuild [tag]"; Deps = "" }
         [pscustomobject]@{ Category = "k8s"; Name = "ktop"; Description = "Pods by CPU or memory"; Usage = "ktop [cpu|memory]"; Deps = "kubectl" }
         [pscustomobject]@{ Category = "k8s"; Name = "kevents"; Description = "Namespace events, most recent last"; Usage = "kevents"; Deps = "kubectl" }
+        [pscustomobject]@{ Category = "k8s"; Name = "kns"; Description = "Set the current kubectl namespace"; Usage = "kns <namespace>"; Deps = "kubectl" }
+        [pscustomobject]@{ Category = "k8s"; Name = "kdesc"; Description = "Describe a pod (fzf or name)"; Usage = "kdesc [pod-name]"; Deps = "fzf,kubectl" }
+        [pscustomobject]@{ Category = "k8s"; Name = "kport"; Description = "Port-forward to a pod"; Usage = "kport <local-port> <pod> <remote-port>"; Deps = "kubectl" }
         [pscustomobject]@{ Category = "go"; Name = "covreport"; Description = "Go tests with HTML coverage report"; Usage = "covreport"; Deps = "" }
         [pscustomobject]@{ Category = "go"; Name = "gomodwhy"; Description = "Why a module is in the Go graph"; Usage = "gomodwhy <module-path>"; Deps = "" }
         [pscustomobject]@{ Category = "go"; Name = "goclean"; Description = "gofmt, vet, and mod tidy"; Usage = "goclean"; Deps = "" }
@@ -900,6 +1514,10 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "net"; Name = "weather"; Description = "Weather via wttr.in"; Usage = "weather [location]"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "tcpcheck"; Description = "TCP reachability check"; Usage = "tcpcheck <host> <port>"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "shorten"; Description = "Shorten a URL with is.gd"; Usage = "shorten <url>"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "pingcheck"; Description = "Five pings to a host"; Usage = "pingcheck <host>"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "sshconfig"; Description = "Host entries from ~/.ssh/config"; Usage = "sshconfig"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "headers"; Description = "HTTP response headers"; Usage = "headers <url>"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "proxy"; Description = "Toggle http(s)_proxy env vars"; Usage = "proxy <on [host:port]|off|status>"; Deps = "" }
         [pscustomobject]@{ Category = "security"; Name = "passgen"; Description = "Random base64 password"; Usage = "passgen [bytes]"; Deps = "" }
         [pscustomobject]@{ Category = "security"; Name = "pubkey"; Description = "Print SSH public keys"; Usage = "pubkey"; Deps = "" }
         [pscustomobject]@{ Category = "security"; Name = "genssh"; Description = "Generate an ed25519 SSH keypair"; Usage = "genssh <key-name> [email]"; Deps = "" }
@@ -909,11 +1527,17 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "security"; Name = "urldecode"; Description = "URL-decode text"; Usage = "urldecode <text>"; Deps = "" }
         [pscustomobject]@{ Category = "security"; Name = "hashfile"; Description = "MD5, SHA1, and SHA256 of a file"; Usage = "hashfile <file>"; Deps = "" }
         [pscustomobject]@{ Category = "security"; Name = "genuuid"; Description = "Random UUID v4"; Usage = "genuuid"; Deps = "" }
+        [pscustomobject]@{ Category = "security"; Name = "jwtdecode"; Description = "Decode a JWT header and payload"; Usage = "jwtdecode <token>"; Deps = "" }
+        [pscustomobject]@{ Category = "security"; Name = "dotenv-check"; Description = "Lint a .env file"; Usage = "dotenv-check [file]"; Deps = "" }
         [pscustomobject]@{ Category = "system"; Name = "mem"; Description = "Physical memory usage"; Usage = "mem"; Deps = "" }
         [pscustomobject]@{ Category = "system"; Name = "cpu"; Description = "Snapshot of CPU/process activity"; Usage = "cpu"; Deps = "" }
         [pscustomobject]@{ Category = "system"; Name = "pidtree"; Description = "Process tree for a PID"; Usage = "pidtree <pid>"; Deps = "" }
         [pscustomobject]@{ Category = "system"; Name = "now"; Description = "Current date and time"; Usage = "now"; Deps = "" }
         [pscustomobject]@{ Category = "system"; Name = "timer"; Description = "Countdown timer"; Usage = "timer <seconds> [label]"; Deps = "" }
+        [pscustomobject]@{ Category = "system"; Name = "diskusage"; Description = "Disk usage summary"; Usage = "diskusage [path]"; Deps = "" }
+        [pscustomobject]@{ Category = "system"; Name = "envdiff"; Description = "Diff two .env files by key"; Usage = "envdiff <file1> <file2>"; Deps = "" }
+        [pscustomobject]@{ Category = "system"; Name = "ports"; Description = "Listening TCP ports"; Usage = "ports"; Deps = "" }
+        [pscustomobject]@{ Category = "system"; Name = "sysinfo"; Description = "One-screen system summary"; Usage = "sysinfo"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "note"; Description = "Append a timestamped note to ~/notes"; Usage = "note <text>"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "jsonpp"; Description = "Pretty-print a JSON file"; Usage = "jsonpp <file>"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "envload"; Description = "Load a .env file into the environment"; Usage = "envload [file]"; Deps = "" }
@@ -921,6 +1545,11 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "prod"; Name = "cheat"; Description = "tldr or Get-Help for a command"; Usage = "cheat <command>"; Deps = "tldr" }
         [pscustomobject]@{ Category = "prod"; Name = "calc"; Description = "Command-line calculator"; Usage = "calc <expression>"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "qr"; Description = "QR code in the terminal"; Usage = "qr <text>"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "todo"; Description = "Append or list entries in ~/todo.md"; Usage = "todo [text]"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "mkproject"; Description = "Scaffold a project directory"; Usage = "mkproject <name> [go|node|python]"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "epoch"; Description = "Unix epoch and human datetime"; Usage = "epoch [epoch|date]"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "diffjson"; Description = "Normalized diff of two JSON files"; Usage = "diffjson <file-a> <file-b>"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "retry"; Description = "Retry a command with exponential backoff"; Usage = "retry <max-attempts> <command> [args...]"; Deps = "" }
         [pscustomobject]@{ Category = "jenkins"; Name = "jenk-crumb"; Description = "Jenkins CSRF crumb"; Usage = "jenk-crumb"; Deps = "" }
         [pscustomobject]@{ Category = "jenkins"; Name = "jenk-build"; Description = "Trigger a Jenkins job build"; Usage = "jenk-build <job-name>"; Deps = "" }
         [pscustomobject]@{ Category = "jenkins"; Name = "jenk-logs"; Description = "Console log of the last Jenkins build"; Usage = "jenk-logs <job-name>"; Deps = "" }

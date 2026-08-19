@@ -44,6 +44,11 @@ $env:JENKINS_URL = "http://mock-jenkins.local"
 $env:JENKINS_USER = "mockuser"
 $env:JENKINS_TOKEN = "mocktoken"
 
+$env:GIT_AUTHOR_NAME = "Sharmory Test"
+$env:GIT_AUTHOR_EMAIL = "test@sharmory.local"
+$env:GIT_COMMITTER_NAME = "Sharmory Test"
+$env:GIT_COMMITTER_EMAIL = "test@sharmory.local"
+
 $HasGit = [bool](Get-Command git -ErrorAction SilentlyContinue)
 
 #########################################################################
@@ -66,6 +71,8 @@ function docker {
         "images -f*"       { }
         "images --format*" { "mockrepo:latest`t123MB" }
         "info*"            { "Client: Docker Engine - Community (mock)" }
+        "inspect*"         { "MOCK_VAR=hello`nOTHER_VAR=world" }
+        "build*"           { "Successfully built mockimage123" }
         default            { Write-Host "[mock] docker $s" }
     }
 }
@@ -77,6 +84,9 @@ function kubectl {
         "get pods*"            { "pod/mock-pod" }
         "top pods*"            { "NAME`tCPU`tMEMORY`nmock-pod`t1m`t2Mi" }
         "get events*"          { "LAST SEEN   TYPE   REASON   OBJECT" }
+        "config set-context*"  { "Context updated." }
+        "describe pod*"        { "Name: mock-pod`nNamespace: default" }
+        "port-forward*"        { "Forwarding from 127.0.0.1:8080 -> 80" }
         default                { Write-Host "[mock] kubectl $s" }
     }
 }
@@ -133,7 +143,11 @@ function Invoke-WebRequest {
     if ($OutFile) {
         $content | Out-File -FilePath $OutFile -Encoding utf8
     }
-    [PSCustomObject]@{ StatusCode = 200; Content = $content }
+    [PSCustomObject]@{
+        StatusCode = 200
+        Content    = $content
+        Headers    = @{ Server = "mock-server"; "Content-Type" = "text/html" }
+    }
 }
 function Resolve-DnsName {
     param([string]$Name, [string]$Type, [Parameter(ValueFromRemainingArguments = $true)]$Rest)
@@ -146,6 +160,10 @@ function Test-NetConnection {
     param([string]$ComputerName, [int]$Port, [Parameter(ValueFromRemainingArguments = $true)]$Rest)
     [PSCustomObject]@{ TcpTestSucceeded = $false }
 }
+function Test-Connection {
+    param([string]$ComputerName, [int]$Count, [Parameter(ValueFromRemainingArguments = $true)]$Rest)
+    Write-Host "[mock] ping $ComputerName x$Count"
+}
 function Clear-DnsClientCache { Write-Host "[mock] Clear-DnsClientCache" }
 
 # --- process control & clipboard ---
@@ -155,6 +173,7 @@ function Stop-Process {
 }
 function Start-Process { param([Parameter(ValueFromRemainingArguments = $true)]$Rest); Write-Host "[mock] Start-Process $Rest" }
 function Set-Clipboard { param([Parameter(ValueFromPipeline = $true)]$InputObject) }
+function Read-Host { param($Prompt) Write-Host "[mock] Read-Host $Prompt"; "n" }
 
 #########################################################################
 # SEED SANDBOX DATA
@@ -192,6 +211,12 @@ if ($HasGit) {
 New-Item -ItemType Directory -Force -Path node_modules | Out-Null
 New-Item -ItemType Directory -Force -Path updir\sub | Out-Null
 "ssh-ed25519 AAAAmockkey mock@sharmory" | Out-File "$FakeHome\.ssh\id_ed25519.pub" -Encoding ascii
+@"
+Host devserver
+    HostName dev.example.com
+    User deploy
+    Port 2222
+"@ | Out-File "$FakeHome\.ssh\config" -Encoding ascii
 
 Pop-Location
 
@@ -241,6 +266,10 @@ Invoke-SharmoryTest "dupfind"   { Copy-Item file1.txt file1_dup.txt; dupfind . }
 Invoke-SharmoryTest "bak"       { bak file1.txt; if (-not (Get-ChildItem "file1.txt.*.bak")) { throw "no backup created" } }
 Invoke-SharmoryTest "cwd"       { cwd }
 Invoke-SharmoryTest "clipcopy"  { clipcopy file1.txt }
+Invoke-SharmoryTest "treelist"  { treelist . }
+Invoke-SharmoryTest "recent"    { recent 5 }
+Invoke-SharmoryTest "swap"      { "a" | Out-File swapA.txt -Encoding ascii; "b" | Out-File swapB.txt -Encoding ascii; swap swapA.txt swapB.txt }
+Invoke-SharmoryTest "trash"     { "trashme" | Out-File trashtest.txt -Encoding ascii; trash trashtest.txt; if (Test-Path trashtest.txt) { throw "not trashed" } }
 
 #########################################################################
 # 2. GIT
@@ -261,8 +290,13 @@ if ($HasGit) {
     Invoke-SharmoryTest "gitsize"       { gitsize }
     Invoke-SharmoryTest "gitconflicts"  { gitconflicts }
     Invoke-SharmoryTest "gitignore"     { gitignore "go,windows" }
+    Invoke-SharmoryTest "gstash"        { "wipstash" | Add-Content file1.txt; git add -A; git stash; gstash }
+    Invoke-SharmoryTest "gopen"         { gopen }
+    Invoke-SharmoryTest "gitbranch-rename" { git checkout -q main; git checkout -q -b rename-old; gitbranch-rename rename-old rename-new; git checkout -q main }
+    Invoke-SharmoryTest "gitlog-graph"  { gitlog-graph }
+    Invoke-SharmoryTest "gcleanup"      { gcleanup }
 } else {
-    foreach ($n in "gitundo","branchclean","branchage","gitlog-today","gacp","gclone","gwip","gunwip","gitprune","prdiff","gitcontributors","gitsize","gitconflicts","gitignore") {
+    foreach ($n in "gitundo","branchclean","branchage","gitlog-today","gacp","gclone","gwip","gunwip","gitprune","prdiff","gitcontributors","gitsize","gitconflicts","gitignore","gopen","gitbranch-rename","gitlog-graph","gcleanup") {
         Skip-SharmoryTest $n "git not installed"
     }
 }
@@ -278,6 +312,11 @@ Invoke-SharmoryTest "dockerlogs"         { dockerlogs mockcontainer }
 Invoke-SharmoryTest "dockersizes"        { dockersizes }
 Invoke-SharmoryTest "ktop"               { ktop }
 Invoke-SharmoryTest "kevents"            { kevents }
+Invoke-SharmoryTest "denv"               { denv mockcontainer }
+Invoke-SharmoryTest "dbuild"             { dbuild mytestimage }
+Invoke-SharmoryTest "kns"                { kns mock-ns }
+Invoke-SharmoryTest "kdesc"              { kdesc }
+Invoke-SharmoryTest "kport"              { kport 8080 mock-pod 80 }
 
 #########################################################################
 # 4. GO (go binary fully mocked)
@@ -321,6 +360,12 @@ Invoke-SharmoryTest "flushdns"   { flushdns }
 Invoke-SharmoryTest "weather"    { weather london }
 Invoke-SharmoryTest "tcpcheck"   { tcpcheck 127.0.0.1 65533 }
 Invoke-SharmoryTest "shorten"    { shorten https://example.com }
+Invoke-SharmoryTest "pingcheck"  { pingcheck example.com }
+Invoke-SharmoryTest "sshconfig"  { sshconfig }
+Invoke-SharmoryTest "headers"    { headers https://example.com }
+Invoke-SharmoryTest "proxy(on)"  { proxy on http://proxy.local:3128 }
+Invoke-SharmoryTest "proxy(off)" { proxy on http://p:1; proxy off }
+Invoke-SharmoryTest "proxy(status)" { proxy status }
 
 #########################################################################
 # 8. SECURITY & ENCODING
@@ -335,6 +380,13 @@ Invoke-SharmoryTest "urlencode"  { urlencode "a b&c" }
 Invoke-SharmoryTest "urldecode"  { urldecode "a%20b" }
 Invoke-SharmoryTest "hashfile"   { hashfile file1.txt }
 Invoke-SharmoryTest "genuuid"    { genuuid }
+Invoke-SharmoryTest "jwtdecode"  { jwtdecode "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IlRlc3QiLCJpYXQiOjE1MTYyMzkwMjJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c" }
+Invoke-SharmoryTest "dotenv-check(clean)" { "APP_ENV=dev`nLOG_LEVEL=info" | Out-File env-clean.env -Encoding ascii; dotenv-check env-clean.env }
+Invoke-SharmoryTest "dotenv-check(bad)" {
+    "EMPTY=`nSECRET_TOKEN=plain`nFOO=has spaces" | Out-File env-bad.env -Encoding ascii
+    $out = dotenv-check env-bad.env *>&1 | Out-String
+    if ($out -notmatch "EMPTY|SECRET|QUOTE") { throw "expected lint issues" }
+}
 
 #########################################################################
 # 9. SYSTEM & PROCESS (Stop-Process is mocked - nothing real is signaled)
@@ -345,6 +397,14 @@ Invoke-SharmoryTest "cpu"     { cpu }
 Invoke-SharmoryTest "pidtree" { pidtree $PID }
 Invoke-SharmoryTest "now"     { now }
 Invoke-SharmoryTest "timer"   { timer 1 TestTimer }
+Invoke-SharmoryTest "diskusage" { diskusage . }
+Invoke-SharmoryTest "envdiff" {
+    "A=1" | Out-File ea.env -Encoding ascii
+    "A=2`nB=3" | Out-File eb.env -Encoding ascii
+    envdiff ea.env eb.env
+}
+Invoke-SharmoryTest "ports"   { ports }
+Invoke-SharmoryTest "sysinfo" { sysinfo }
 
 #########################################################################
 # 10. PRODUCTIVITY & MISC
@@ -358,6 +418,22 @@ Invoke-SharmoryTest "ffind (text)" { ffind hello }
 Invoke-SharmoryTest "cheat"   { cheat Get-ChildItem }
 Invoke-SharmoryTest "calc"    { calc "2+2" }
 Invoke-SharmoryTest "qr"      { qr hello }
+Invoke-SharmoryTest "todo(add)" { todo "buy groceries from sharmory test" }
+Invoke-SharmoryTest "todo(list)" { todo }
+Invoke-SharmoryTest "mkproject(bare)" {
+    Set-Location $Sandbox
+    Remove-Item -Recurse -Force sharmory-bare-test -ErrorAction SilentlyContinue
+    mkproject sharmory-bare-test bare
+    if (-not (Test-Path (Join-Path $Sandbox "sharmory-bare-test\README.md"))) { throw "missing README" }
+}
+Invoke-SharmoryTest "epoch(now)" { epoch }
+Invoke-SharmoryTest "epoch(from-ts)" { epoch 0 }
+Invoke-SharmoryTest "diffjson" {
+    '{"a":1}' | Out-File ja.json -Encoding ascii
+    '{"a":2}' | Out-File jb.json -Encoding ascii
+    diffjson ja.json jb.json
+}
+Invoke-SharmoryTest "retry(pass)" { retry 3 Write-Output ok }
 
 #########################################################################
 # 11. CI / JENKINS (Invoke-RestMethod mocked - no real Jenkins contacted)
