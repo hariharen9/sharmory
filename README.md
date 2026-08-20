@@ -1,9 +1,9 @@
 # Sharmory
 
-[![GitHub release](https://img.shields.io/github/v/release/hariharen9/sharmory)](https://github.com/hariharen9/sharmory/releases)
-[![GitHub Downloads](https://img.shields.io/github/downloads/hariharen9/sharmory/total)](https://github.com/hariharen9/sharmory/releases)
-[![npm](https://img.shields.io/npm/dm/sharmory)](https://www.npmjs.com/package/sharmory)
-[![PyPI](https://img.shields.io/pypi/dm/sharmory)](https://pypi.org/project/sharmory/)
+[![GitHub release](https://img.shields.io/github/v/release/hariharen9/sharmory?label=latest)](https://github.com/hariharen9/sharmory/releases)
+[![GitHub downloads](https://img.shields.io/github/downloads/hariharen9/sharmory/total?label=GitHub%20downloads)](https://github.com/hariharen9/sharmory/releases)
+[![npm downloads](https://img.shields.io/npm/dm/sharmory?label=npm%20downloads%2Fmo)](https://www.npmjs.com/package/sharmory)
+[![PyPI downloads](https://img.shields.io/pypi/dm/sharmory?label=PyPI%20downloads%2Fmo)](https://pypi.org/project/sharmory/)
 
 A single-file library of dev-focused Zsh & PowerShell functions — Git shortcuts, Docker/K8s helpers,
 Go/Node/Python workflow utilities, networking checks, security/encoding helpers, and
