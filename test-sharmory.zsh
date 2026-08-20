@@ -528,6 +528,9 @@ runs  "gopen"              "gopen"
 runs  "gitbranch-rename"   "git checkout -q main && git checkout -q -b rename-old && gitbranch-rename rename-old rename-new && git checkout -q main"
 runs  "gitlog-graph"       "gitlog-graph"
 runs  "gcleanup"           "gcleanup"
+runs  "grecentbranch"      "grecentbranch 5"
+runs  "gcamend"            "git checkout -q -b gcamend-test && git commit --allow-empty -q -m 'before amend' && gcamend 'after amend' && git checkout -q main"
+runs  "gdiffstage"         "echo staged >> file1.txt && git add file1.txt && gdiffstage; git reset HEAD file1.txt"
 
 #########################################################################
 # 3. DOCKER & KUBERNETES (docker/kubectl fully mocked — no real daemon touched)
@@ -619,7 +622,10 @@ run  "sshconfig"    "sshconfig"
 run  "headers"      "headers https://example.com"
 run  "proxy(on)"    "proxy on http://proxy.local:3128"
 run  "proxy(off)"   "proxy on http://p:1 && proxy off"
-run  "proxy(status)" "proxy status"
+run  "proxy(status)"  "proxy status"
+run  "tlscheck"       "tlscheck example.com"
+run  "portscan"       "portscan 127.0.0.1 65530 65532"
+run  "ipinfo"         "ipinfo 8.8.8.8"
 
 #########################################################################
 # 8. SECURITY & ENCODING
@@ -658,12 +664,16 @@ run  "envdiff"       "printf 'A=1\n' > /tmp/ea && printf 'A=2\nB=3\n' > /tmp/eb 
 run  "envdiff(same)" "printf 'A=1\n' > /tmp/ec && envdiff /tmp/ec /tmp/ec; rm -f /tmp/ec"
 run  "ports"       "ports"
 run  "sysinfo"     "sysinfo"
+run  "openports"   "openports"
 
 #########################################################################
 # 10. PRODUCTIVITY & MISC
 #########################################################################
 section "Productivity"
-run  "note"      "note 'test note from sharmory tests'"
+run  "note(add)"    "note 'test note from sharmory tests'"
+run  "note(today)"  "note 'setup note' && note today | grep -q 'setup note'"
+run  "note(list)"   "note list"
+run  "note(search)" "note 'searchable entry' && note search 'searchable' | grep -q 'searchable'"
 if [[ $HAS_JQ -eq 1 ]]; then
     run "jsonpp" "echo '{\"k\":1}' > /tmp/sharmory-test.json && jsonpp /tmp/sharmory-test.json; rm -f /tmp/sharmory-test.json"
 else
@@ -679,8 +689,9 @@ else
     skip "calc" "python3 not found"
 fi
 run  "qr"    "qr hello"
-run  "todo(add)"   "todo 'buy groceries'"
-run  "todo(list)"  "todo"
+run  "todo(add)"    "todo 'buy groceries'"
+run  "todo(list)"   "todo"
+run  "todo(done)"   "todo 'finish report' && todo done 'finish report' && grep -q '\\[x\\]' \"\$HOME/todo.md\""
 run  "mkproject(bare)"   "cd /tmp && rm -rf sharmory-bare-test && mkproject sharmory-bare-test bare && [ -f /tmp/sharmory-bare-test/README.md ]; ret=\$?; rm -rf /tmp/sharmory-bare-test; exit \$ret"
 run  "mkproject(node)"   "cd /tmp && rm -rf sharmory-node-test && mkproject sharmory-node-test node && [ -f /tmp/sharmory-node-test/package.json ]; ret=\$?; rm -rf /tmp/sharmory-node-test; exit \$ret"
 run  "mkproject(python)" "cd /tmp && rm -rf sharmory-py-test && mkproject sharmory-py-test python && [ -f /tmp/sharmory-py-test/main.py ]; ret=\$?; rm -rf /tmp/sharmory-py-test; exit \$ret"
@@ -693,8 +704,12 @@ else
     skip "diffjson"       "jq not found"
     skip "diffjson(same)" "jq not found"
 fi
-run  "retry(pass)"   "retry 3 true"
-run  "retry(fail)"   "retry 2 false; [ \$? -ne 0 ]"
+run  "retry(pass)"    "retry 3 true"
+run  "retry(fail)"    "retry 2 false; [ \$? -ne 0 ]"
+run  "hist"           "hist; true"
+run  "mktemplate"     "mkdir -p \"\$HOME/.sharmory/templates/mytemplate\" && echo hi > \"\$HOME/.sharmory/templates/mytemplate/README.md\" && cd /tmp && rm -rf sharmory-tmpl-test && mktemplate mytemplate sharmory-tmpl-test && [ -f /tmp/sharmory-tmpl-test/README.md ]; ret=\$?; rm -rf /tmp/sharmory-tmpl-test; exit \$ret"
+run  "envswitch(list)" "envswitch"
+run  "envswitch(load)" "mkdir -p \"\$HOME/.sharmory/envprofiles\" && printf 'TESTVAR=hello\n' > \"\$HOME/.sharmory/envprofiles/testprofile.env\" && envswitch testprofile && [ \"\$TESTVAR\" = hello ]"
 
 #########################################################################
 # 11. CI / JENKINS (curl mocked — no real Jenkins server contacted)

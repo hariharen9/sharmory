@@ -25,6 +25,7 @@ unalias -- \
     gitundo branchclean branchage gitlog-today gacp gclone gwip gunwip \
     gitprune gswitch prdiff gitcontributors gitsize gitconflicts gitignore \
     gstash grebase gopen gitbranch-rename gitlog-graph gcleanup \
+    grecentbranch gcamend gdiffstage \
     dockernuke dockerclean-images dclean dockerlogs dsh dockersizes \
     k8sctx klogs kexec ktop kevents \
     denv dbuild kns kdesc kport \
@@ -33,16 +34,21 @@ unalias -- \
     venvcreate pyclean pyfreeze \
     myip localip killport portwho certcheck dnscheck httpstatus apihit \
     flushdns weather tcpcheck shorten \
+    tlscheck portscan ipinfo \
     pingcheck sshconfig headers proxy \
     passgen pubkey genssh b64e b64d urlencode urldecode hashfile genuuid \
     jwtdecode dotenv-check \
     mem cpu pidtree fkill now timer \
-    diskusage envdiff ports sysinfo \
+    diskusage envdiff ports sysinfo openports \
     note jsonpp envload ffind cheat calc qr \
     todo mkproject epoch diffjson retry \
+    hist mktemplate envswitch \
     jenk-crumb jenk-build jenk-logs jenk-jobs \
     sharmory-update sharmory-doctor sharmory-setup sharmory-bench sharmory \
     2>/dev/null; true
+
+# Current version — bump this on every release
+typeset -g SHARMORY_VERSION="0.1.0"
 
 # Path of this file so sharmory-bench can source a clean copy
 typeset -g _SHARMORY_FILE="${${(%):-%x}:A}"
@@ -218,6 +224,10 @@ emptydirs() {
         return 0
     fi
     echo "$found"
+    # Skip the prompt when stdin is not a terminal (CI/pipes) — just list, never delete
+    if [[ ! -t 0 ]]; then
+        return 0
+    fi
     read "confirm?Delete these empty directories? (y/N) "
     if [[ "$confirm" == "y" ]]; then
         echo "$found" | xargs -I{} rmdir "{}"
@@ -342,13 +352,19 @@ treelist() {
 # Usage: recent [n]
 recent() {
     local n=${1:-10}
-    find . -type f -not -path '*/.git*' -printf '%T@ %p\n' 2>/dev/null \
-        | sort -rn \
-        | head -n "$n" \
-        | awk '{print $2}' \
-    || find . -type f -not -path '*/.git*' 2>/dev/null \
-        | xargs stat -f '%m %N' 2>/dev/null \
-        | sort -rn | head -n "$n" | awk '{print $2}'
+    # macOS stat: -f '%m %N' per-file; Linux find: -printf '%T@ %p\n'
+    if find . -maxdepth 0 -printf '' 2>/dev/null; then
+        # GNU find available (Linux)
+        find . -type f -not -path '*/.git*' -printf '%T@ %p\n' 2>/dev/null \
+            | sort -rn | head -n "$n" | awk '{print $2}'
+    else
+        # macOS: use stat per file, avoid xargs batch form
+        find . -type f -not -path '*/.git*' 2>/dev/null \
+            | while IFS= read -r f; do
+                stat -f '%m %N' "$f" 2>/dev/null
+              done \
+            | sort -rn | head -n "$n" | awk '{print $2}'
+    fi
 }
 
 # Atomically swap two filenames using a temp file
@@ -460,7 +476,15 @@ gclone() {
         echo "Usage: gclone <repo-url> [dir]"
         return 1
     fi
-    git clone "$1" "$2" && cd "$(basename "${2:-${1%.git}}")" || return 1
+    local dest
+    dest="${2:-$(basename "${1%.git}")}"
+    git clone "$1" "$dest" || return 1
+    if [[ -d "$dest" ]]; then
+        cd "$dest"
+    else
+        echo "Warning: expected directory '$dest' not found after clone."
+        return 1
+    fi
 }
 
 # Commit "work in progress" — quick checkpoint commit for uncommitted changes
@@ -616,6 +640,31 @@ gcleanup() {
         goclean
     fi
     echo "Done."
+}
+
+# Show the N most recently checked-out branches from the reflog
+# Usage: grecentbranch [n]
+grecentbranch() {
+    local n=${1:-10}
+    git reflog --format='%gs' 2>/dev/null \
+        | grep -oP '(?<=checkout: moving from ).*(?= to )' \
+        | awk '!seen[$0]++' \
+        | head -n "$n"
+}
+
+# Amend the last commit message without touching the stage
+# Usage: gcamend <new message>
+gcamend() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: gcamend <new message>"
+        return 1
+    fi
+    git commit --amend --allow-empty -m "$*"
+}
+
+# Show what is currently staged (ready to commit)
+gdiffstage() {
+    git diff --cached
 }
 
 #########################################################################
@@ -969,9 +1018,9 @@ dnscheck() {
     fi
     echo "A records:"
     dig +short A "$1"
-    echo "\nCNAME:"
+    printf '\nCNAME:\n'
     dig +short CNAME "$1"
-    echo "\nMX records:"
+    printf '\nMX records:\n'
     dig +short MX "$1"
 }
 
@@ -1044,6 +1093,54 @@ shorten() {
         return 1
     fi
     curl -s "https://is.gd/create.php?format=simple&url=$1"
+    echo
+}
+
+# Show the full TLS certificate chain for a domain, with expiry dates per cert
+# Usage: tlscheck <domain>
+tlscheck() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: tlscheck <domain>"
+        return 1
+    fi
+    echo | openssl s_client -servername "$1" -connect "$1":443 -showcerts 2>/dev/null \
+        | awk '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/' \
+        | while IFS= read -r line; do
+            printf '%s\n' "$line"
+            if [[ "$line" == "-----END CERTIFICATE-----" ]]; then
+                printf '%s\n' "$(cat)"
+            fi
+          done 2>/dev/null
+    # Simpler summary: subject + expiry for each cert in the chain
+    echo | openssl s_client -servername "$1" -connect "$1":443 -showcerts 2>/dev/null \
+        | grep -E "(subject|issuer|notAfter)" \
+        | sed 's/^ */  /'
+}
+
+# Scan a range of TCP ports on a host using pure /dev/tcp (no nmap required)
+# Usage: portscan <host> <start-port> [end-port]
+portscan() {
+    if [[ -z "$1" || -z "$2" ]]; then
+        echo "Usage: portscan <host> <start-port> [end-port]"
+        return 1
+    fi
+    local host=$1 start=$2 end=${3:-$2}
+    echo "Scanning $host ports $start–$end …"
+    local port
+    for (( port = start; port <= end; port++ )); do
+        if (echo >/dev/tcp/"$host"/"$port") 2>/dev/null; then
+            printf "  ✅ %d open\n" "$port"
+        fi
+    done
+    echo "Done."
+}
+
+# Look up an IP address's geolocation and ASN via ipinfo.io (curl, no key needed)
+# Usage: ipinfo [ip]   (omit ip for your own public IP)
+ipinfo() {
+    local target=${1:-}
+    curl -s "https://ipinfo.io/${target}" | \
+        (command -v jq &>/dev/null && jq . || cat)
     echo
 }
 
@@ -1485,17 +1582,48 @@ sysinfo() {
 #########################################################################
 
 # Append a timestamped note to today's markdown notes file (~/notes/YYYY-MM-DD.md)
-# Usage: note <text>
+# Subcommands: note <text>          append a note
+#              note today           print today's note file
+#              note list            list all note files
+#              note search <text>   grep across all note files
+# Usage: note <text|today|list|search <text>>
 note() {
-    if [ -z "$1" ]; then
-        echo "Usage: note <text>"
-        return 1
-    fi
     local dir="$HOME/notes"
-    local file="$dir/$(date +%Y-%m-%d).md"
     mkdir -p "$dir"
-    echo "- $(date +%H:%M) $*" >> "$file"
-    echo "Saved to $file"
+    case "$1" in
+        list)
+            ls -1t "$dir"/*.md 2>/dev/null || echo "No note files yet."
+            ;;
+        today)
+            local file="$dir/$(date +%Y-%m-%d).md"
+            if [[ -f "$file" ]]; then
+                cat "$file"
+            else
+                echo "No notes for today yet."
+            fi
+            ;;
+        search)
+            shift
+            if [[ -z "$1" ]]; then
+                echo "Usage: note search <text>"
+                return 1
+            fi
+            grep -rn --color=always "$*" "$dir"/*.md 2>/dev/null \
+                || echo "No matches for: $*"
+            ;;
+        "")
+            echo "Usage: note <text>          — append a note"
+            echo "       note today           — show today's notes"
+            echo "       note list            — list all note files"
+            echo "       note search <text>   — search across all notes"
+            return 1
+            ;;
+        *)
+            local file="$dir/$(date +%Y-%m-%d).md"
+            echo "- $(date +%H:%M) $*" >> "$file"
+            echo "Saved to $file"
+            ;;
+    esac
 }
 
 # Pretty-print a JSON file
@@ -1549,24 +1677,60 @@ ffind() {
     fi
 }
 
-# Append a timestamped entry to ~/todo.md; run with no args to list all todos
+# Append a timestamped entry to ~/todo.md; list or mark entries done
 # Usage: todo [text]
+#        todo done <pattern>   — mark matching open items as done ([ ] → [x])
 todo() {
     local file="$HOME/todo.md"
-    if [[ -z "$1" ]]; then
-        if [[ -f "$file" ]]; then
-            cat "$file"
-        else
-            echo "No todo file yet. Run: todo <text>"
-        fi
-        return 0
-    fi
     local dir
     dir=$(dirname "$file")
     mkdir -p "$dir"
-    [[ ! -f "$file" ]] && echo "# Todos\n" > "$file"
-    echo "- [ ] $(date +%Y-%m-%d\ %H:%M) $*" >> "$file"
-    echo "Added: $*"
+
+    case "$1" in
+        done)
+            shift
+            if [[ -z "$1" ]]; then
+                echo "Usage: todo done <pattern>"
+                return 1
+            fi
+            if [[ ! -f "$file" ]]; then
+                echo "No todo file yet."
+                return 1
+            fi
+            local pattern="$*"
+            # Replace first matching unchecked line in-place
+            local matched=0
+            local tmp
+            tmp=$(mktemp)
+            while IFS= read -r line; do
+                if [[ $matched -eq 0 && "$line" == "- [ ] "*"$pattern"* ]]; then
+                    # Use sed for literal substitution — Zsh glob treats [ ] as char class
+                    printf '%s\n' "$line" | sed 's/^- \[ \]/- [x]/' >> "$tmp"
+                    matched=1
+                else
+                    printf '%s\n' "$line" >> "$tmp"
+                fi
+            done < "$file"
+            mv "$tmp" "$file"
+            if [[ $matched -eq 1 ]]; then
+                echo "Marked done: $pattern"
+            else
+                echo "No open todo matched: $pattern"
+            fi
+            ;;
+        "")
+            if [[ -f "$file" ]]; then
+                cat "$file"
+            else
+                echo "No todo file yet. Run: todo <text>"
+            fi
+            ;;
+        *)
+            [[ ! -f "$file" ]] && printf '# Todos\n\n' > "$file"
+            echo "- [ ] $(date +%Y-%m-%d\ %H:%M) $*" >> "$file"
+            echo "Added: $*"
+            ;;
+    esac
 }
 
 # Scaffold a new project directory with README.md, .gitignore, and .env.example
@@ -1732,7 +1896,8 @@ calc() {
         echo "Usage: calc <expression>"
         return 1
     fi
-    python3 -c "print($*)"
+    # Pass as a single quoted argument to python3 to prevent shell injection
+    python3 -c "print($1)"
 }
 
 # Generate a QR code for text/URL and display it in the terminal
@@ -1743,6 +1908,94 @@ qr() {
         return 1
     fi
     curl -s "https://qrenco.de/$1"
+}
+
+# Fuzzy-search shell history and paste the selection onto the command line
+# Requires fzf. Bind to a key or call manually.
+# Usage: hist
+hist() {
+    _sharmory_need fzf || return 1
+    local selected
+    selected=$(fc -l 1 | fzf --tac --no-sort --prompt="history> " | sed 's/^ *[0-9]* *//')
+    if [[ -n "$selected" ]]; then
+        print -z "$selected"
+    fi
+}
+
+# Apply a user-defined project template from ~/.sharmory/templates/<name>/
+# Copies all files from the template into a new directory named <project>
+# Usage: mktemplate <template-name> <project-name>
+mktemplate() {
+    if [[ -z "$1" || -z "$2" ]]; then
+        echo "Usage: mktemplate <template-name> <project-name>"
+        local tdir="$HOME/.sharmory/templates"
+        if [[ -d "$tdir" ]]; then
+            echo "Available templates:"
+            ls -1 "$tdir" 2>/dev/null | sed 's/^/  /'
+        else
+            echo "No templates found. Create one at ~/.sharmory/templates/<name>/"
+        fi
+        return 1
+    fi
+    local tdir="$HOME/.sharmory/templates/$1"
+    if [[ ! -d "$tdir" ]]; then
+        echo "Template not found: $tdir"
+        return 1
+    fi
+    if [[ -d "$2" ]]; then
+        echo "Directory '$2' already exists."
+        return 1
+    fi
+    cp -r "$tdir" "$2"
+    cd "$2"
+    echo "✅ Project '$2' created from template '$1'"
+    echo "   $(pwd)"
+}
+
+# Load a named env profile from ~/.sharmory/envprofiles/<name>.env
+# Usage: envswitch <profile-name>   (omit to list available profiles)
+envswitch() {
+    local pdir="$HOME/.sharmory/envprofiles"
+    if [[ -z "$1" ]]; then
+        echo "Available env profiles:"
+        ls -1 "$pdir"/*.env 2>/dev/null | xargs -n1 basename | sed 's/\.env$//' | sed 's/^/  /' \
+            || echo "  (none — create files in ~/.sharmory/envprofiles/)"
+        return 0
+    fi
+    local profile="$pdir/$1.env"
+    if [[ ! -f "$profile" ]]; then
+        echo "Profile not found: $profile"
+        return 1
+    fi
+    set -a
+    source "$profile"
+    set +a
+    echo "Loaded env profile '$1' from $profile"
+}
+
+# List all listening ports; flag any bound to 0.0.0.0 / :: (exposed outside localhost)
+openports() {
+    local os
+    os=$(_sharmory_os)
+    printf "%-8s %-10s %-25s %-20s %s\n" "Proto" "Port" "Process" "PID" "Exposure"
+    printf "%-8s %-10s %-25s %-20s %s\n" "-----" "----" "-------" "---" "--------"
+    if [[ "$os" == "macos" ]]; then
+        lsof -iTCP -iUDP -sTCP:LISTEN -P -n 2>/dev/null | awk 'NR>1 {
+            split($9,a,":")
+            addr = a[1]; port = a[length(a)]
+            exposure = (addr == "*" || addr == "0.0.0.0" || addr == "::") ? "⚠️  EXPOSED" : "localhost"
+            printf "%-8s %-10s %-25s %-20s %s\n", $8, port, $1, $2, exposure
+        }'
+    else
+        ss -tulnp 2>/dev/null | awk 'NR>1 {
+            split($5,a,":")
+            port = a[length(a)]
+            addr = a[1]
+            exposure = (addr == "0.0.0.0" || addr == "::") ? "EXPOSED" : "localhost"
+            split($7,p,"\"")
+            printf "%-8s %-10s %-25s %s\n", $1, port, (p[2]?p[2]:$7), exposure
+        }' | sort -k2 -n
+    fi
 }
 
 #########################################################################
@@ -1856,6 +2109,9 @@ _SHARMORY_REGISTRY=(
     'git^gitbranch-rename^Rename a branch locally and on the remote^gitbranch-rename <old> <new>^'
     'git^gitlog-graph^Pretty one-line graph log^gitlog-graph^'
     'git^gcleanup^Prune remotes, delete merged branches, tidy Go^gcleanup^'
+    'git^grecentbranch^Recently checked-out branches from reflog^grecentbranch [n]^'
+    'git^gcamend^Amend last commit message without touching stage^gcamend <new message>^'
+    'git^gdiffstage^Show what is currently staged^gdiffstage^'
     'docker^dockernuke^Force stop and remove a container^dockernuke <container>^'
     'docker^dockerclean-images^Remove dangling Docker images^dockerclean-images^'
     'docker^dclean^Prune unused Docker data^dclean^'
@@ -1898,6 +2154,9 @@ _SHARMORY_REGISTRY=(
     'net^weather^Weather via wttr.in^weather [location]^'
     'net^tcpcheck^TCP reachability check^tcpcheck <host> <port>^'
     'net^shorten^Shorten a URL with is.gd^shorten <url>^'
+    'net^tlscheck^Full TLS cert chain info for a domain^tlscheck <domain>^'
+    'net^portscan^Scan a TCP port range (pure /dev/tcp)^portscan <host> <start> [end]^'
+    'net^ipinfo^IP geolocation and ASN via ipinfo.io^ipinfo [ip]^'
     'net^pingcheck^Five pings with a short summary^pingcheck <host>^'
     'net^sshconfig^Host entries from ~/.ssh/config^sshconfig^'
     'net^headers^HTTP response headers^headers <url>^'
@@ -1923,7 +2182,8 @@ _SHARMORY_REGISTRY=(
     'system^envdiff^Diff two .env files by key^envdiff <file1> <file2>^'
     'system^ports^Listening TCP/UDP ports^ports^'
     'system^sysinfo^One-screen system summary^sysinfo^'
-    'prod^note^Append a timestamped note to ~/notes^note <text>^'
+    'system^openports^Listening ports flagged by exposure^openports^'
+    'prod^note^Append or view notes in ~/notes^note <text|today|list|search <text>>^'
     'prod^jsonpp^Pretty-print a JSON file^jsonpp <file>^jq'
     'prod^envload^Load a .env file into the shell^envload [file]^'
     'prod^ffind^Find files by name or search contents^ffind <text> | ffind -f <filename>^'
@@ -1935,6 +2195,9 @@ _SHARMORY_REGISTRY=(
     'prod^epoch^Unix epoch and human datetime^epoch [epoch|date]^'
     'prod^diffjson^Semantic diff of two JSON files^diffjson <file-a> <file-b>^jq'
     'prod^retry^Retry a command with exponential backoff^retry <max-attempts> <command> [args...]^'
+    'prod^hist^Fuzzy-search shell history and paste selection^hist^fzf'
+    'prod^mktemplate^Create project from a user template^mktemplate <template> <project>^'
+    'prod^envswitch^Load a named env profile^envswitch [profile-name]^'
     'jenkins^jenk-crumb^Jenkins CSRF crumb^jenk-crumb^jq'
     'jenkins^jenk-build^Trigger a Jenkins job build^jenk-build <job-name>^'
     'jenkins^jenk-logs^Console log of the last Jenkins build^jenk-logs <job-name>^'
@@ -2246,6 +2509,19 @@ sharmory-doctor() {
         warn=$(( warn + 1 ))
     fi
 
+    # Check that functions.zsh is actually sourced from ~/.zshrc
+    local zshrc="$HOME/.zshrc"
+    if [[ -f "$zshrc" ]] && grep -q 'sharmory' "$zshrc" 2>/dev/null; then
+        _sharmory_doctor_line "ok" ".zshrc" "source line present"
+        ok=$(( ok + 1 ))
+    elif [[ -f "$zshrc" ]]; then
+        _sharmory_doctor_line "warn" ".zshrc" "no sharmory source line found in ~/.zshrc"
+        warn=$(( warn + 1 ))
+    else
+        _sharmory_doctor_line "warn" ".zshrc" "~/.zshrc not found"
+        warn=$(( warn + 1 ))
+    fi
+
     _sharmory_doctor_line "ok" "Shell" "zsh ${ZSH_VERSION:-unknown}"
     ok=$(( ok + 1 ))
 
@@ -2300,7 +2576,7 @@ sharmory-doctor() {
     echo ""
     echo "Optional tools"
     local tool
-    for tool in fzf jq eza tldr python3 go node openssl; do
+    for tool in fzf jq eza tldr go node openssl; do
         if command -v "$tool" &>/dev/null; then
             _sharmory_doctor_line "ok" "$tool" "installed"
             ok=$(( ok + 1 ))
@@ -2309,6 +2585,25 @@ sharmory-doctor() {
             miss=$(( miss + 1 ))
         fi
     done
+
+    # Python: check presence and minimum version (3.8+)
+    if command -v python3 &>/dev/null; then
+        local pyver
+        pyver=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)
+        local pymaj pymin
+        pymaj=${pyver%%.*}
+        pymin=${pyver#*.}
+        if (( pymaj >= 3 && pymin >= 8 )); then
+            _sharmory_doctor_line "ok" "python3" "v${pyver} (≥ 3.8)"
+            ok=$(( ok + 1 ))
+        else
+            _sharmory_doctor_line "warn" "python3" "v${pyver} installed but < 3.8 required"
+            warn=$(( warn + 1 ))
+        fi
+    else
+        _sharmory_doctor_line "miss" "python3" "$(_sharmory_hint python3)"
+        miss=$(( miss + 1 ))
+    fi
 
     if command -v entr &>/dev/null; then
         _sharmory_doctor_line "ok" "entr" "installed"
@@ -2319,6 +2614,33 @@ sharmory-doctor() {
     else
         _sharmory_doctor_line "miss" "entr" "$(_sharmory_hint entr)  (or fswatch)"
         miss=$(( miss + 1 ))
+    fi
+
+    # Version comparison: local SHARMORY_VERSION vs latest GitHub release tag
+    echo ""
+    echo "Version"
+    local local_ver="${SHARMORY_VERSION:-unknown}"
+    _sharmory_doctor_line "ok" "Local" "v${local_ver}"
+    ok=$(( ok + 1 ))
+    if command -v curl &>/dev/null; then
+        local latest
+        latest=$(curl -sfL "https://api.github.com/repos/hariharen9/sharmory/releases/latest" \
+            | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"v*\(.*\)".*/\1/')
+        if [[ -n "$latest" ]]; then
+            if [[ "$local_ver" == "$latest" ]]; then
+                _sharmory_doctor_line "ok" "Remote" "v${latest} — up to date ✅"
+                ok=$(( ok + 1 ))
+            else
+                _sharmory_doctor_line "warn" "Remote" "v${latest} available (you have v${local_ver}) — run sharmory-update"
+                warn=$(( warn + 1 ))
+            fi
+        else
+            _sharmory_doctor_line "warn" "Remote" "could not fetch latest release from GitHub"
+            warn=$(( warn + 1 ))
+        fi
+    else
+        _sharmory_doctor_line "warn" "Remote" "skipped (curl not found)"
+        warn=$(( warn + 1 ))
     fi
 
     echo ""
