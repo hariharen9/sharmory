@@ -20,11 +20,11 @@
 # manager (oh-my-zsh, Prezto, etc.) has already claimed one of our names.
 unalias -- \
     mkcd up lsd fcd ftext permsof extract compress duh sizeof findbig \
-    emptydirs dupfind bak cwd clipcopy watchrun \
+    emptydirs dupfind bak cwd clipcopy clip watchrun \
     treelist recent swap trash \
     gitundo branchclean branchage gitlog-today gacp gclone gwip gunwip \
     gitprune gswitch prdiff gitcontributors gitsize gitconflicts gitignore \
-    gstash grebase gopen gitbranch-rename gitlog-graph gcleanup \
+    gstash grebase gopen gpr gitbranch-rename gitlog-graph gcleanup \
     grecentbranch gcamend gdiffstage \
     dockernuke dockerclean-images dclean dockerlogs dsh dockersizes \
     k8sctx klogs kexec ktop kevents \
@@ -304,6 +304,35 @@ clipcopy() {
         return 1
     fi
     echo "Copied contents of $1"
+}
+
+# Copy stdin (or a file) to the clipboard — works with pipes: echo foo | clip
+# Usage: clip [file]   or   some-command | clip
+clip() {
+    local os
+    os=$(_sharmory_os)
+    local _clip_cmd
+    if [[ "$os" == "macos" ]]; then
+        _clip_cmd="pbcopy"
+    elif command -v xclip &>/dev/null; then
+        _clip_cmd="xclip -selection clipboard"
+    elif command -v wl-copy &>/dev/null; then
+        _clip_cmd="wl-copy"
+    else
+        echo "No clipboard tool found."
+        return 1
+    fi
+    if [[ -n "$1" ]]; then
+        if [[ ! -f "$1" ]]; then
+            echo "File not found: $1"
+            return 1
+        fi
+        eval "$_clip_cmd" < "$1"
+        echo "Copied: $1"
+    else
+        eval "$_clip_cmd"
+        echo "Copied from stdin."
+    fi
 }
 
 # Watch a file or directory and re-run a command whenever it changes
@@ -610,6 +639,42 @@ gopen() {
     fi
 }
 
+# Open a PR creation page for the current branch on GitHub/GitLab/Bitbucket
+gpr() {
+    local remote branch url base
+    remote=$(git remote get-url origin 2>/dev/null)
+    if [[ -z "$remote" ]]; then
+        echo "No 'origin' remote found."
+        return 1
+    fi
+    branch=$(git branch --show-current 2>/dev/null)
+    if [[ -z "$branch" ]]; then
+        echo "Not on a branch."
+        return 1
+    fi
+    # Normalise SSH → HTTPS
+    if [[ "$remote" == git@* ]]; then
+        base=$(echo "$remote" | sed -E 's|git@([^:]+):(.+)(\.git)?$|https://\1/\2|')
+    else
+        base="${remote%.git}"
+    fi
+    # Build the compare URL per host
+    case "$base" in
+        *github.com*)  url="${base}/compare/${branch}?expand=1" ;;
+        *gitlab.com*)  url="${base}/-/merge_requests/new?merge_request[source_branch]=${branch}" ;;
+        *bitbucket.org*) url="${base}/pull-requests/new?source=${branch}" ;;
+        *)             url="${base}/compare/${branch}" ;;
+    esac
+    echo "Opening PR page: $url"
+    if command -v open &>/dev/null; then
+        open "$url"
+    elif command -v xdg-open &>/dev/null; then
+        xdg-open "$url"
+    else
+        echo "$url"
+    fi
+}
+
 # Rename a git branch locally and on the remote, updating tracking refs
 # Usage: gitbranch-rename <old-name> <new-name>
 gitbranch-rename() {
@@ -888,10 +953,22 @@ gowatch() {
 # 5. NODE / NPM
 #########################################################################
 
-# Delete node_modules and lockfile, then reinstall from scratch
+# Delete node_modules and the appropriate lockfile, then reinstall from scratch
+# Detects npm / yarn / pnpm automatically
 npmclean() {
-    rm -rf node_modules package-lock.json
-    npm install
+    rm -rf node_modules
+    if [[ -f pnpm-lock.yaml ]]; then
+        echo "pnpm project detected — removing pnpm-lock.yaml"
+        rm -f pnpm-lock.yaml
+        pnpm install
+    elif [[ -f yarn.lock ]]; then
+        echo "yarn project detected — removing yarn.lock"
+        rm -f yarn.lock
+        yarn install
+    else
+        rm -f package-lock.json
+        npm install
+    fi
 }
 
 # List the scripts defined in package.json
@@ -2083,6 +2160,7 @@ _SHARMORY_REGISTRY=(
     'files^bak^Timestamped backup copy of a file^bak <file>^'
     'files^cwd^Copy the working directory path to the clipboard^cwd^'
     'files^clipcopy^Copy a file contents to the clipboard^clipcopy <file>^'
+    'files^clip^Copy stdin or a file to the clipboard^clip [file]^'
     'files^watchrun^Re-run a command when a path changes^watchrun <path> -- <command...>^entr,fswatch'
     'files^treelist^Recursive tree listing^treelist [dir] [depth]^'
     'files^recent^Most recently modified files^recent [n]^'
@@ -2106,6 +2184,7 @@ _SHARMORY_REGISTRY=(
     'git^gstash^Interactive stash picker^gstash^fzf'
     'git^grebase^Interactive rebase N commits^grebase [n]^'
     'git^gopen^Open the origin remote in a browser^gopen^'
+    'git^gpr^Open PR creation page for current branch^gpr^'
     'git^gitbranch-rename^Rename a branch locally and on the remote^gitbranch-rename <old> <new>^'
     'git^gitlog-graph^Pretty one-line graph log^gitlog-graph^'
     'git^gcleanup^Prune remotes, delete merged branches, tidy Go^gcleanup^'
@@ -2135,7 +2214,7 @@ _SHARMORY_REGISTRY=(
     'go^gobench^Run Go benchmarks with memory stats^gobench [pattern]^'
     'go^gonew^Scaffold a minimal Go module^gonew <module-path>^'
     'go^gowatch^Re-run Go tests on save^gowatch^entr'
-    'node^npmclean^Delete node_modules and reinstall^npmclean^'
+    'node^npmclean^Delete node_modules + lockfile and reinstall (npm/yarn/pnpm)^npmclean^'
     'node^npmscripts^List package.json scripts^npmscripts^jq'
     'node^npmoutdated^Show outdated npm dependencies^npmoutdated^'
     'node^npmsize^Size of node_modules^npmsize^'

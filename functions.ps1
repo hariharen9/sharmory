@@ -12,6 +12,9 @@
 # 0. INTERNAL HELPERS
 #########################################################################
 
+# Current version — bump this on every release
+$script:SharmoryVersion = "0.1.0"
+
 if ($MyInvocation.MyCommand.Path) {
     $script:SharmoryFile = $MyInvocation.MyCommand.Path
 }
@@ -187,6 +190,59 @@ function clipcopy {
     }
     Get-Content $Path -Raw | Set-Clipboard
     Write-Host "Copied contents of $Path"
+}
+
+# Copy stdin (or a file) to the clipboard — works with pipes: echo foo | clip
+# Usage: clip [file]   or   some-command | clip
+function clip {
+    param([string]$Path)
+    if ($Path) {
+        if (-not (Test-Path $Path)) { Write-Host "File not found: $Path"; return }
+        Get-Content $Path -Raw | Set-Clipboard
+        Write-Host "Copied: $Path"
+    } else {
+        $input | Set-Clipboard
+        Write-Host "Copied from stdin."
+    }
+}
+
+# Interactively cd into a subdirectory picked via fzf
+# Usage: fcd
+function fcd {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $dir = Get-ChildItem -Recurse -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\\.git(\\|$)' } |
+        Select-Object -ExpandProperty FullName |
+        fzf --prompt="cd> "
+    if ($dir) { Set-Location $dir }
+}
+
+# Fuzzy-search file contents and open the matching file in $EDITOR
+# Usage: ftext
+function ftext {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $line = Get-ChildItem -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\(\.git|node_modules|dist|build)\\' } |
+        Select-String -Pattern "" -ErrorAction SilentlyContinue |
+        ForEach-Object { "$($_.Path):$($_.LineNumber):$($_.Line)" } |
+        fzf --prompt="search> "
+    if ($line) {
+        $file = ($line -split ":")[0]
+        $editor = if ($env:EDITOR) { $env:EDITOR } else { "notepad" }
+        & $editor $file
+    }
+}
+
+# Watch a path and re-run a command on change (requires watchexec or entr via WSL)
+# Usage: watchrun <path> <command>
+function watchrun {
+    param([Parameter(Mandatory)][string]$WatchPath, [Parameter(Mandatory)][string]$Command)
+    if (Get-Command watchexec -ErrorAction SilentlyContinue) {
+        watchexec --watch $WatchPath -- $Command
+    } else {
+        Write-Host "[!] 'watchexec' is required for watchrun on Windows."
+        Write-Host "    Install: winget install watchexec.watchexec  or  scoop install watchexec"
+    }
 }
 
 # Recursive tree listing; uses `tree` if present
@@ -457,6 +513,63 @@ function gcleanup {
     Write-Host "Done."
 }
 
+# Interactively pick a branch to switch to via fzf, including remotes
+function gswitch {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $branch = git branch -a --format='%(refname:short)' |
+        Where-Object { $_ -notmatch 'HEAD' } |
+        Sort-Object -Unique |
+        fzf --prompt="branch> "
+    if (-not $branch) { return }
+    $local = $branch -replace '^origin/', ''
+    git switch $local 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        git switch -c $local $branch
+    }
+}
+
+# Open a PR creation page for the current branch on GitHub/GitLab/Bitbucket
+function gpr {
+    $remote = git remote get-url origin 2>$null
+    if (-not $remote) { Write-Host "No 'origin' remote found."; return }
+    $branch = git branch --show-current 2>$null
+    if (-not $branch) { Write-Host "Not on a branch."; return }
+    $url = $remote.Trim()
+    if ($url -match '^git@([^:]+):(.+)$') {
+        $url = "https://$($Matches[1])/$($Matches[2])"
+    }
+    $url = $url -replace '\.git$', ''
+    if ($url -match 'github\.com')    { $url = "$url/compare/${branch}?expand=1" }
+    elseif ($url -match 'gitlab\.com') { $url = "$url/-/merge_requests/new?merge_request[source_branch]=$branch" }
+    elseif ($url -match 'bitbucket\.org') { $url = "$url/pull-requests/new?source=$branch" }
+    else                               { $url = "$url/compare/$branch" }
+    Write-Host "Opening PR page: $url"
+    Start-Process $url
+}
+
+# Amend the last commit message without touching the stage
+# Usage: gcamend <new message>
+function gcamend {
+    param([Parameter(Mandatory)][string]$Message)
+    git commit --amend --allow-empty -m $Message
+}
+
+# Show the N most recently checked-out branches from the reflog
+# Usage: grecentbranch [n]
+function grecentbranch {
+    param([int]$Count = 10)
+    git reflog --format='%gs' 2>$null |
+        Where-Object { $_ -match 'checkout: moving from .+ to ' } |
+        ForEach-Object { ($_ -replace 'checkout: moving from .+ to ', '').Trim() } |
+        Select-Object -Unique |
+        Select-Object -First $Count
+}
+
+# Show what is currently staged (ready to commit)
+function gdiffstage {
+    git diff --cached
+}
+
 #########################################################################
 # 3. DOCKER & KUBERNETES
 #########################################################################
@@ -559,6 +672,51 @@ function kport {
     kubectl port-forward "pod/$Pod" "${LocalPort}:${RemotePort}"
 }
 
+# Interactively pick a running container via fzf and open a shell inside it
+function dsh {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $cid = docker ps --format "{{.ID}}`t{{.Names}}`t{{.Image}}" |
+        fzf --prompt="container> " |
+        ForEach-Object { ($_ -split "`t")[0] }
+    if (-not $cid) { return }
+    docker exec -it $cid sh -c "command -v bash >/dev/null && exec bash || exec sh"
+}
+
+# Interactively pick a kubectl context and namespace via fzf, and switch to them
+function k8sctx {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    if (-not (Test-SharmoryDependency kubectl)) { return }
+    $ctx = kubectl config get-contexts -o name | fzf --prompt="context> "
+    if (-not $ctx) { return }
+    kubectl config use-context $ctx
+    $ns = kubectl get ns -o name |
+        ForEach-Object { $_ -replace '^namespace/', '' } |
+        fzf --prompt="namespace> "
+    if (-not $ns) { return }
+    kubectl config set-context --current --namespace=$ns
+    Write-Host "Switched to context '$ctx', namespace '$ns'"
+}
+
+# Interactively pick a pod via fzf and stream its logs
+function klogs {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $pod = kubectl get pods -o name |
+        fzf --prompt="pod> " |
+        ForEach-Object { $_ -replace '^pod/', '' }
+    if (-not $pod) { return }
+    kubectl logs -f $pod @args
+}
+
+# Interactively pick a pod via fzf and exec a shell into it
+function kexec {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $pod = kubectl get pods -o name |
+        fzf --prompt="pod> " |
+        ForEach-Object { $_ -replace '^pod/', '' }
+    if (-not $pod) { return }
+    kubectl exec -it $pod -- sh -c "command -v bash >/dev/null && exec bash || exec sh"
+}
+
 #########################################################################
 # 4. GO DEVELOPMENT
 #########################################################################
@@ -599,14 +757,53 @@ function gobench {
     go test "-bench=$Pattern" -benchmem ./...
 }
 
+# Scaffold a minimal new Go module in the current directory
+# Usage: gonew <module-path>
+function gonew {
+    param([Parameter(Mandatory)][string]$Module)
+    go mod init $Module
+    @'
+package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("Hello, world!")
+}
+'@ | Out-File -Encoding utf8 main.go
+    Write-Host "Initialized Go module $Module with a starter main.go"
+}
+
+# Watch .go files and re-run tests on save (requires watchexec)
+function gowatch {
+    if (Get-Command watchexec -ErrorAction SilentlyContinue) {
+        watchexec --exts go -- go test ./...
+    } else {
+        Write-Host "[!] 'watchexec' is required for gowatch on Windows."
+        Write-Host "    Install: winget install watchexec.watchexec  or  scoop install watchexec"
+    }
+}
+
 #########################################################################
 # 5. NODE / NPM
 #########################################################################
 
-# Delete node_modules and lockfile, then reinstall from scratch
+# Delete node_modules and the appropriate lockfile, then reinstall from scratch
+# Detects npm / yarn / pnpm automatically
 function npmclean {
-    Remove-Item -Recurse -Force node_modules, package-lock.json -ErrorAction SilentlyContinue
-    npm install
+    Remove-Item -Recurse -Force node_modules -ErrorAction SilentlyContinue
+    if (Test-Path pnpm-lock.yaml) {
+        Write-Host "pnpm project detected - removing pnpm-lock.yaml"
+        Remove-Item -Force pnpm-lock.yaml -ErrorAction SilentlyContinue
+        pnpm install
+    } elseif (Test-Path yarn.lock) {
+        Write-Host "yarn project detected - removing yarn.lock"
+        Remove-Item -Force yarn.lock -ErrorAction SilentlyContinue
+        yarn install
+    } else {
+        Remove-Item -Force package-lock.json -ErrorAction SilentlyContinue
+        npm install
+    }
 }
 
 # List the scripts defined in package.json
@@ -775,6 +972,82 @@ function tcpcheck {
 function shorten {
     param([Parameter(Mandatory)][string]$Url)
     Invoke-RestMethod ('https://is.gd/create.php?format=simple&url=' + $Url)
+}
+
+# Check a domain's TLS certificate expiry date and days remaining
+# Usage: certcheck <domain>
+function certcheck {
+    param([Parameter(Mandatory)][string]$Domain)
+    try {
+        $req = [Net.HttpWebRequest]::Create("https://$Domain")
+        $req.AllowAutoRedirect = $false
+        $req.Timeout = 10000
+        $resp = $req.GetResponse()
+        $resp.Dispose()
+        $cert = [Security.Cryptography.X509Certificates.X509Certificate2]$req.ServicePoint.Certificate
+        $expiry = [DateTime]::Parse($cert.GetExpirationDateString())
+        $days = ($expiry - (Get-Date)).Days
+        Write-Host "Expires : $expiry"
+        Write-Host "Days remaining: $days"
+    } catch {
+        Write-Host "Could not retrieve certificate for ${Domain}: $_"
+    }
+}
+
+# Show TLS certificate chain subject/issuer/expiry for a domain
+# Usage: tlscheck <domain>
+function tlscheck {
+    param([Parameter(Mandatory)][string]$Domain)
+    try {
+        $req = [Net.HttpWebRequest]::Create("https://$Domain")
+        $req.AllowAutoRedirect = $false
+        $req.Timeout = 10000
+        $null = $req.GetResponse()
+        $chain = [Security.Cryptography.X509Certificates.X509Chain]::new()
+        $cert  = [Security.Cryptography.X509Certificates.X509Certificate2]$req.ServicePoint.Certificate
+        $null  = $chain.Build($cert)
+        foreach ($el in $chain.ChainElements) {
+            $c = $el.Certificate
+            Write-Host ("  Subject : {0}" -f $c.Subject)
+            Write-Host ("  Issuer  : {0}" -f $c.Issuer)
+            Write-Host ("  Expires : {0}" -f $c.NotAfter)
+            Write-Host ""
+        }
+    } catch {
+        Write-Host "Could not retrieve certificate chain for ${Domain}: $_"
+    }
+}
+
+# Scan a range of TCP ports on a host using Test-NetConnection
+# Usage: portscan <host> <start-port> [end-port]
+function portscan {
+    param(
+        [Parameter(Mandatory)][string]$HostName,
+        [Parameter(Mandatory)][int]$StartPort,
+        [int]$EndPort = 0
+    )
+    if ($EndPort -eq 0) { $EndPort = $StartPort }
+    Write-Host "Scanning $HostName ports $StartPort-$EndPort ..."
+    for ($p = $StartPort; $p -le $EndPort; $p++) {
+        $result = Test-NetConnection -ComputerName $HostName -Port $p -WarningAction SilentlyContinue
+        if ($result.TcpTestSucceeded) {
+            Write-Host ("  [open] {0}" -f $p)
+        }
+    }
+    Write-Host "Done."
+}
+
+# Look up an IP address's geolocation and ASN via ipinfo.io (no key needed for basic data)
+# Usage: ipinfo [ip]   (omit ip for your own public IP)
+function ipinfo {
+    param([string]$Target = "")
+    $url = if ($Target) { "https://ipinfo.io/$Target/json" } else { "https://ipinfo.io/json" }
+    try {
+        $data = Invoke-RestMethod $url -ErrorAction Stop
+        $data | Format-List
+    } catch {
+        Write-Host "ipinfo request failed: $_"
+    }
 }
 
 # Send a few pings and print reachability
@@ -1133,19 +1406,82 @@ function sysinfo {
     }
 }
 
+# Fuzzy-pick a running process and kill it
+# Usage: fkill
+function fkill {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $selected = Get-Process | ForEach-Object {
+        "{0,6}  {1}" -f $_.Id, $_.ProcessName
+    } | fzf --prompt="kill> "
+    if (-not $selected) { return }
+    $pid = ($selected.TrimStart() -split '\s+')[0]
+    try {
+        Stop-Process -Id $pid -Force -ErrorAction Stop
+        Write-Host "Killed PID $pid"
+    } catch {
+        Write-Host "Failed to kill PID ${pid}: $_"
+    }
+}
+
+# List all listening ports; flag any bound to 0.0.0.0 / :: as externally exposed
+# Usage: openports
+function openports {
+    "{0,-8} {1,-10} {2,-25} {3}" -f "Proto", "Port", "Process", "Exposure"
+    "{0,-8} {1,-10} {2,-25} {3}" -f "-----", "----", "-------", "--------"
+    Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+        $addr   = $_.LocalAddress
+        $port   = $_.LocalPort
+        $expose = if ($addr -in @("0.0.0.0", "::")) { "!! EXPOSED" } else { "localhost" }
+        $procName = try {
+            (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName
+        } catch { "?" }
+        "{0,-8} {1,-10} {2,-25} {3}" -f "TCP", $port, $procName, $expose
+    } | Sort-Object { [int]($_ -split '\s+')[1] }
+}
+
 #########################################################################
 # 10. PRODUCTIVITY & MISC
 #########################################################################
 
 # Append a timestamped note to today's markdown notes file (~/notes/YYYY-MM-DD.md)
-# Usage: note <text>
+# Subcommands: today, list, search <text>
+# Usage: note <text>   |  note today  |  note list  |  note search <text>
 function note {
-    param([Parameter(Mandatory)][string]$Text)
-    $dir = "$HOME\notes"
+    param([string]$Subcommand, [Parameter(ValueFromRemainingArguments)][string[]]$Rest)
+    $dir = Join-Path $HOME "notes"
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    $file = "$dir\$(Get-Date -Format 'yyyy-MM-dd').md"
-    "- $(Get-Date -Format 'HH:mm') $Text" | Out-File -Append -Encoding utf8 $file
-    Write-Host "Saved to $file"
+    $today = Get-Date -Format 'yyyy-MM-dd'
+    switch ($Subcommand) {
+        "list" {
+            Get-ChildItem "$dir\*.md" -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -ExpandProperty Name
+        }
+        "today" {
+            $file = Join-Path $dir "$today.md"
+            if (Test-Path $file) { Get-Content $file }
+            else { Write-Host "No notes for today yet." }
+        }
+        "search" {
+            $query = $Rest -join " "
+            if (-not $query) { Write-Host "Usage: note search <text>"; return }
+            Get-ChildItem "$dir\*.md" -ErrorAction SilentlyContinue |
+                Select-String -Pattern $query -ErrorAction SilentlyContinue |
+                ForEach-Object { "$($_.Filename):$($_.LineNumber): $($_.Line)" }
+        }
+        "" {
+            Write-Host "Usage: note <text>          -- append a note"
+            Write-Host "       note today           -- show today's notes"
+            Write-Host "       note list            -- list all note files"
+            Write-Host "       note search <text>   -- search across all notes"
+        }
+        default {
+            $text = (@($Subcommand) + $Rest) -join " "
+            $file = Join-Path $dir "$today.md"
+            "- $(Get-Date -Format 'HH:mm') $text" | Out-File -Append -Encoding utf8 $file
+            Write-Host "Saved to $file"
+        }
+    }
 }
 
 # Pretty-print a JSON file
@@ -1223,18 +1559,41 @@ function qr {
     (Invoke-WebRequest "https://qrenco.de/$Text" -UseBasicParsing).Content
 }
 
-# Append a timestamped entry to ~/todo.md; no args lists todos
-# Usage: todo [text]
+# Append a timestamped entry to ~/todo.md; list or mark entries done
+# Usage: todo [text]   |   todo done <pattern>
 function todo {
-    param([string]$Text)
+    param([string]$Subcommand, [Parameter(ValueFromRemainingArguments)][string[]]$Rest)
     $file = Join-Path $HOME "todo.md"
-    if (-not $Text) {
-        if (Test-Path $file) { Get-Content $file } else { Write-Host 'No todo file yet. Run: todo [text]' }
-        return
+    switch ($Subcommand) {
+        "done" {
+            $pattern = $Rest -join " "
+            if (-not $pattern) { Write-Host "Usage: todo done <pattern>"; return }
+            if (-not (Test-Path $file)) { Write-Host "No todo file yet."; return }
+            $lines   = Get-Content $file
+            $matched = $false
+            $out     = foreach ($line in $lines) {
+                if (-not $matched -and $line -match '^\- \[ \].*' + [regex]::Escape($pattern)) {
+                    $matched = $true
+                    $line -replace '^\- \[ \]', '- [x]'
+                } else {
+                    $line
+                }
+            }
+            $out | Set-Content -Encoding UTF8 $file
+            if ($matched) { Write-Host "Marked done: $pattern" }
+            else { Write-Host "No open todo matched: $pattern" }
+        }
+        "" {
+            if (Test-Path $file) { Get-Content $file }
+            else { Write-Host 'No todo file yet. Run: todo <text>' }
+        }
+        default {
+            $text = (@($Subcommand) + $Rest) -join " "
+            if (-not (Test-Path $file)) { "# Todos`n" | Out-File -Encoding utf8 $file }
+            ("- [ ] {0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm"), $text) | Out-File -Append -Encoding utf8 $file
+            Write-Host "Added: $text"
+        }
     }
-    if (-not (Test-Path $file)) { "# Todos`n" | Out-File -Encoding utf8 $file }
-    ("- [ ] {0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm"), $Text) | Out-File -Append -Encoding utf8 $file
-    Write-Host "Added: $Text"
 }
 
 # Scaffold a project directory with README, .gitignore, and .env.example
@@ -1378,6 +1737,70 @@ function retry {
     }
 }
 
+# Fuzzy-search command history and paste the selection into the readline buffer
+# Usage: hist
+function hist {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $selected = Get-History | ForEach-Object { $_.CommandLine } |
+        fzf --tac --no-sort --prompt="history> "
+    if ($selected) {
+        [Microsoft.PowerShell.PSConsoleReadLine]::Insert($selected)
+    }
+}
+
+# Apply a user-defined project template from $HOME\.sharmory\templates\<name>\
+# Copies all files from the template into a new directory named <project>
+# Usage: mktemplate <template-name> <project-name>
+function mktemplate {
+    param([string]$TemplateName, [string]$ProjectName)
+    $tbase = Join-Path $HOME ".sharmory\templates"
+    if (-not $TemplateName -or -not $ProjectName) {
+        Write-Host "Usage: mktemplate <template-name> <project-name>"
+        if (Test-Path $tbase) {
+            Write-Host "Available templates:"
+            Get-ChildItem $tbase -Directory -ErrorAction SilentlyContinue |
+                ForEach-Object { Write-Host "  $($_.Name)" }
+        } else {
+            Write-Host "No templates found. Create one at $tbase\<name>\"
+        }
+        return
+    }
+    $tdir = Join-Path $tbase $TemplateName
+    if (-not (Test-Path $tdir)) { Write-Host "Template not found: $tdir"; return }
+    if (Test-Path $ProjectName) { Write-Host "Directory '$ProjectName' already exists."; return }
+    Copy-Item $tdir $ProjectName -Recurse
+    Set-Location $ProjectName
+    Write-Host "Project '$ProjectName' created from template '$TemplateName'"
+    Write-Host "  $((Get-Location).Path)"
+}
+
+# Load a named env profile from $HOME\.sharmory\envprofiles\<name>.env
+# Usage: envswitch <profile-name>   (omit to list available profiles)
+function envswitch {
+    param([string]$ProfileName)
+    $pdir = Join-Path $HOME ".sharmory\envprofiles"
+    if (-not $ProfileName) {
+        Write-Host "Available env profiles:"
+        if (Test-Path $pdir) {
+            Get-ChildItem "$pdir\*.env" -ErrorAction SilentlyContinue |
+                ForEach-Object { Write-Host "  $($_.BaseName)" }
+        } else {
+            Write-Host "  (none — create files in $pdir\)"
+        }
+        return
+    }
+    $profile = Join-Path $pdir "$ProfileName.env"
+    if (-not (Test-Path $profile)) { Write-Host "Profile not found: $profile"; return }
+    $count = 0
+    Get-Content $profile | ForEach-Object {
+        if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+            [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process")
+            $count++
+        }
+    }
+    Write-Host "Loaded env profile '$ProfileName' ($count vars) from $profile"
+}
+
 #########################################################################
 # 11. CI / JENKINS
 # (requires $env:JENKINS_URL, $env:JENKINS_USER, $env:JENKINS_TOKEN to be set)
@@ -1459,10 +1882,14 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "files"; Name = "bak"; Description = "Timestamped backup copy of a file"; Usage = "bak <file>"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "cwd"; Description = "Copy the working directory path to the clipboard"; Usage = "cwd"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "clipcopy"; Description = "Copy a file contents to the clipboard"; Usage = "clipcopy <file>"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "clip"; Description = "Copy stdin or file to clipboard"; Usage = "clip [file]"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "treelist"; Description = "Recursive tree listing"; Usage = "treelist [dir] [depth]"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "recent"; Description = "Most recently modified files"; Usage = "recent [n]"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "swap"; Description = "Swap two filenames"; Usage = "swap <file-a> <file-b>"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "trash"; Description = "Move a path to the Recycle Bin"; Usage = "trash <file-or-dir>"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "fcd"; Description = "Interactively cd into a subdirectory via fzf"; Usage = "fcd"; Deps = "fzf" }
+        [pscustomobject]@{ Category = "files"; Name = "ftext"; Description = "Fuzzy-search file contents and open match"; Usage = "ftext"; Deps = "fzf" }
+        [pscustomobject]@{ Category = "files"; Name = "watchrun"; Description = "Re-run a command on file change"; Usage = "watchrun <path> <command>"; Deps = "watchexec" }
         [pscustomobject]@{ Category = "git"; Name = "gitundo"; Description = "Undo last commit, keep changes staged"; Usage = "gitundo"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "branchclean"; Description = "Delete local branches already merged"; Usage = "branchclean"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "branchage"; Description = "Local branches sorted by last commit date"; Usage = "branchage"; Deps = "" }
@@ -1483,6 +1910,11 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "git"; Name = "gitbranch-rename"; Description = "Rename a branch locally and on the remote"; Usage = "gitbranch-rename <old> <new>"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "gitlog-graph"; Description = "Pretty one-line graph log"; Usage = "gitlog-graph"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "gcleanup"; Description = "Prune remotes, delete merged branches, tidy Go"; Usage = "gcleanup"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gswitch"; Description = "Fuzzy-pick and checkout a branch"; Usage = "gswitch"; Deps = "fzf" }
+        [pscustomobject]@{ Category = "git"; Name = "gpr"; Description = "Open a PR for the current branch"; Usage = "gpr"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gcamend"; Description = "Amend the last commit message"; Usage = "gcamend <message>"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "grecentbranch"; Description = "Recently checked-out branches from reflog"; Usage = "grecentbranch [n]"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gdiffstage"; Description = "Show staged diff (git diff --cached)"; Usage = "gdiffstage"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dockernuke"; Description = "Force stop and remove a container"; Usage = "dockernuke <container>"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dockerclean-images"; Description = "Remove dangling Docker images"; Usage = "dockerclean-images"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dclean"; Description = "Prune unused Docker data"; Usage = "dclean"; Deps = "" }
@@ -1490,17 +1922,23 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "docker"; Name = "dockersizes"; Description = "Human-readable local image sizes"; Usage = "dockersizes"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "denv"; Description = "Print a container environment"; Usage = "denv <container>"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dbuild"; Description = "Build an image tagged from the directory name"; Usage = "dbuild [tag]"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "dsh"; Description = "Fuzzy-pick a container and open a shell"; Usage = "dsh"; Deps = "fzf,docker" }
         [pscustomobject]@{ Category = "k8s"; Name = "ktop"; Description = "Pods by CPU or memory"; Usage = "ktop [cpu|memory]"; Deps = "kubectl" }
         [pscustomobject]@{ Category = "k8s"; Name = "kevents"; Description = "Namespace events, most recent last"; Usage = "kevents"; Deps = "kubectl" }
         [pscustomobject]@{ Category = "k8s"; Name = "kns"; Description = "Set the current kubectl namespace"; Usage = "kns <namespace>"; Deps = "kubectl" }
         [pscustomobject]@{ Category = "k8s"; Name = "kdesc"; Description = "Describe a pod (fzf or name)"; Usage = "kdesc [pod-name]"; Deps = "fzf,kubectl" }
         [pscustomobject]@{ Category = "k8s"; Name = "kport"; Description = "Port-forward to a pod"; Usage = "kport <local-port> <pod> <remote-port>"; Deps = "kubectl" }
+        [pscustomobject]@{ Category = "k8s"; Name = "k8sctx"; Description = "Fuzzy-switch kubectl context and namespace"; Usage = "k8sctx"; Deps = "fzf,kubectl" }
+        [pscustomobject]@{ Category = "k8s"; Name = "klogs"; Description = "Fuzzy-pick a pod and stream its logs"; Usage = "klogs"; Deps = "fzf,kubectl" }
+        [pscustomobject]@{ Category = "k8s"; Name = "kexec"; Description = "Fuzzy-pick a pod and exec into it"; Usage = "kexec [shell]"; Deps = "fzf,kubectl" }
         [pscustomobject]@{ Category = "go"; Name = "covreport"; Description = "Go tests with HTML coverage report"; Usage = "covreport"; Deps = "" }
         [pscustomobject]@{ Category = "go"; Name = "gomodwhy"; Description = "Why a module is in the Go graph"; Usage = "gomodwhy <module-path>"; Deps = "" }
         [pscustomobject]@{ Category = "go"; Name = "goclean"; Description = "gofmt, vet, and mod tidy"; Usage = "goclean"; Deps = "" }
         [pscustomobject]@{ Category = "go"; Name = "goupdate"; Description = "Upgrade Go module dependencies"; Usage = "goupdate"; Deps = "" }
         [pscustomobject]@{ Category = "go"; Name = "gobench"; Description = "Run Go benchmarks with memory stats"; Usage = "gobench [pattern]"; Deps = "" }
-        [pscustomobject]@{ Category = "node"; Name = "npmclean"; Description = "Delete node_modules and reinstall"; Usage = "npmclean"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "gonew"; Description = "Scaffold a new Go module"; Usage = "gonew <module-path> [dir]"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "gowatch"; Description = "Re-run go tests on file change"; Usage = "gowatch [./...]"; Deps = "watchexec" }
+        [pscustomobject]@{ Category = "node"; Name = "npmclean"; Description = "Delete node_modules and reinstall (npm/yarn/pnpm)"; Usage = "npmclean"; Deps = "" }
         [pscustomobject]@{ Category = "node"; Name = "npmscripts"; Description = "List package.json scripts"; Usage = "npmscripts"; Deps = "" }
         [pscustomobject]@{ Category = "node"; Name = "npmoutdated"; Description = "Show outdated npm dependencies"; Usage = "npmoutdated"; Deps = "" }
         [pscustomobject]@{ Category = "node"; Name = "npmsize"; Description = "Size of node_modules"; Usage = "npmsize"; Deps = "" }
@@ -1521,6 +1959,10 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "net"; Name = "pingcheck"; Description = "Five pings to a host"; Usage = "pingcheck <host>"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "sshconfig"; Description = "Host entries from ~/.ssh/config"; Usage = "sshconfig"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "headers"; Description = "HTTP response headers"; Usage = "headers <url>"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "certcheck"; Description = "TLS certificate expiry for a host"; Usage = "certcheck <host> [port]"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "tlscheck"; Description = "Full TLS certificate chain info"; Usage = "tlscheck <host> [port]"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "portscan"; Description = "Scan a port range on a host"; Usage = "portscan <host> <start> [end]"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "ipinfo"; Description = "IP geolocation and ASN via ipinfo.io"; Usage = "ipinfo [ip]"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "proxy"; Description = "Toggle http(s)_proxy env vars"; Usage = "proxy <on [host:port]|off|status>"; Deps = "" }
         [pscustomobject]@{ Category = "security"; Name = "passgen"; Description = "Random base64 password"; Usage = "passgen [bytes]"; Deps = "" }
         [pscustomobject]@{ Category = "security"; Name = "pubkey"; Description = "Print SSH public keys"; Usage = "pubkey"; Deps = "" }
@@ -1542,18 +1984,23 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "system"; Name = "envdiff"; Description = "Diff two .env files by key"; Usage = "envdiff <file1> <file2>"; Deps = "" }
         [pscustomobject]@{ Category = "system"; Name = "ports"; Description = "Listening TCP ports"; Usage = "ports"; Deps = "" }
         [pscustomobject]@{ Category = "system"; Name = "sysinfo"; Description = "One-screen system summary"; Usage = "sysinfo"; Deps = "" }
-        [pscustomobject]@{ Category = "prod"; Name = "note"; Description = "Append a timestamped note to ~/notes"; Usage = "note <text>"; Deps = "" }
+        [pscustomobject]@{ Category = "system"; Name = "fkill"; Description = "Fuzzy-pick a process and kill it"; Usage = "fkill"; Deps = "fzf" }
+        [pscustomobject]@{ Category = "system"; Name = "openports"; Description = "Listening ports flagged by exposure"; Usage = "openports"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "note"; Description = "Append or view notes in ~/notes"; Usage = "note <text|today|list|search <text>>"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "jsonpp"; Description = "Pretty-print a JSON file"; Usage = "jsonpp <file>"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "envload"; Description = "Load a .env file into the environment"; Usage = "envload [file]"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "ffind"; Description = "Find files by name or search contents"; Usage = "ffind <text> | ffind -f <filename>"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "cheat"; Description = "tldr or Get-Help for a command"; Usage = "cheat <command>"; Deps = "tldr" }
         [pscustomobject]@{ Category = "prod"; Name = "calc"; Description = "Command-line calculator"; Usage = "calc <expression>"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "qr"; Description = "QR code in the terminal"; Usage = "qr <text>"; Deps = "" }
-        [pscustomobject]@{ Category = "prod"; Name = "todo"; Description = "Append or list entries in ~/todo.md"; Usage = "todo [text]"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "todo"; Description = "Append, list, or mark done entries in ~/todo.md"; Usage = "todo [text] | todo done <pattern>"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "mkproject"; Description = "Scaffold a project directory"; Usage = "mkproject <name> [go|node|python]"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "epoch"; Description = "Unix epoch and human datetime"; Usage = "epoch [epoch|date]"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "diffjson"; Description = "Normalized diff of two JSON files"; Usage = "diffjson <file-a> <file-b>"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "retry"; Description = "Retry a command with exponential backoff"; Usage = "retry <max-attempts> <command> [args...]"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "hist"; Description = "Fuzzy-search shell history and paste selection"; Usage = "hist"; Deps = "fzf" }
+        [pscustomobject]@{ Category = "prod"; Name = "mktemplate"; Description = "Create project from a user template"; Usage = "mktemplate <template> <project>"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "envswitch"; Description = "Load a named env profile"; Usage = "envswitch [profile-name]"; Deps = "" }
         [pscustomobject]@{ Category = "jenkins"; Name = "jenk-crumb"; Description = "Jenkins CSRF crumb"; Usage = "jenk-crumb"; Deps = "" }
         [pscustomobject]@{ Category = "jenkins"; Name = "jenk-build"; Description = "Trigger a Jenkins job build"; Usage = "jenk-build <job-name>"; Deps = "" }
         [pscustomobject]@{ Category = "jenkins"; Name = "jenk-logs"; Description = "Console log of the last Jenkins build"; Usage = "jenk-logs <job-name>"; Deps = "" }
@@ -1975,6 +2422,21 @@ function sharmory-doctor {
         $warn++
     }
 
+    # Check that $PROFILE sources sharmory
+    if (Test-Path $PROFILE) {
+        $profileContent = Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue
+        if ($profileContent -match 'sharmory') {
+            Write-SharmoryDoctorLine "ok" "PROFILE" "source line present"
+            $ok++
+        } else {
+            Write-SharmoryDoctorLine "warn" "PROFILE" "no sharmory source line found in `$PROFILE"
+            $warn++
+        }
+    } else {
+        Write-SharmoryDoctorLine "warn" "PROFILE" "`$PROFILE not found ($PROFILE)"
+        $warn++
+    }
+
     Write-SharmoryDoctorLine "ok" "Shell" ("PowerShell {0}" -f $PSVersionTable.PSVersion)
     $ok++
 
@@ -2034,18 +2496,59 @@ function sharmory-doctor {
 
     Write-Output ""
     Write-Output "Optional tools"
-    foreach ($tool in @("fzf", "jq", "eza", "tldr", "python", "go", "node", "openssl")) {
-        $check = $tool
-        if ($tool -eq "python" -and -not (Get-Command python -ErrorAction SilentlyContinue)) {
-            $check = "python3"
-        }
-        if (Get-Command $check -ErrorAction SilentlyContinue) {
+    foreach ($tool in @("fzf", "jq", "eza", "tldr", "go", "node", "openssl", "watchexec")) {
+        if (Get-Command $tool -ErrorAction SilentlyContinue) {
             Write-SharmoryDoctorLine "ok" $tool "installed"
             $ok++
         } else {
             Write-SharmoryDoctorLine "miss" $tool (Get-SharmoryInstallHint $tool)
             $miss++
         }
+    }
+
+    # Python: check presence and minimum version (3.8+)
+    $pyCmd = if (Get-Command python -ErrorAction SilentlyContinue) { "python" }
+             elseif (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" }
+             else { $null }
+    if ($pyCmd) {
+        $pyver = & $pyCmd -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
+        if ($pyver -match '^(\d+)\.(\d+)$') {
+            $maj = [int]$Matches[1]; $min = [int]$Matches[2]
+            if ($maj -ge 3 -and $min -ge 8) {
+                Write-SharmoryDoctorLine "ok" "python" "v$pyver (>= 3.8)"
+                $ok++
+            } else {
+                Write-SharmoryDoctorLine "warn" "python" "v$pyver installed but < 3.8 required"
+                $warn++
+            }
+        } else {
+            Write-SharmoryDoctorLine "ok" "python" "installed (version unknown)"
+            $ok++
+        }
+    } else {
+        Write-SharmoryDoctorLine "miss" "python" (Get-SharmoryInstallHint "python")
+        $miss++
+    }
+
+    # Version comparison: local vs latest GitHub release
+    Write-Output ""
+    Write-Output "Version"
+    $localVer = $script:SharmoryVersion
+    Write-SharmoryDoctorLine "ok" "Local" "v$localVer"
+    $ok++
+    try {
+        $rel = Invoke-RestMethod "https://api.github.com/repos/hariharen9/sharmory/releases/latest" -ErrorAction Stop
+        $latest = $rel.tag_name -replace '^v', ''
+        if ($latest -eq $localVer) {
+            Write-SharmoryDoctorLine "ok" "Remote" "v$latest -- up to date"
+            $ok++
+        } else {
+            Write-SharmoryDoctorLine "warn" "Remote" "v$latest available (you have v$localVer) -- run sharmory-update"
+            $warn++
+        }
+    } catch {
+        Write-SharmoryDoctorLine "warn" "Remote" "could not fetch latest release from GitHub"
+        $warn++
     }
 
     Write-Output ""

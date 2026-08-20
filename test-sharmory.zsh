@@ -114,8 +114,8 @@ esac
 exit 0
 EOF
 
-# --- go / npm: no-op, always succeed ---
-for cmd in go npm; do
+# --- go / npm / yarn / pnpm: no-op, always succeed ---
+for cmd in go npm yarn pnpm; do
 cat > "$MOCKBIN/$cmd" <<EOF
 #!/usr/bin/env bash
 exit 0
@@ -495,6 +495,8 @@ run  "dupfind"     "cp file1.txt file1_dup.txt && dupfind ."
 run  "bak"         "bak file1.txt && ls file1.txt.*.bak >/dev/null"
 run  "cwd"         "cwd"
 run  "clipcopy"    "clipcopy file1.txt"
+run  "clip(file)"  "clip file1.txt"
+run  "clip(stdin)" "echo 'hello clip' | clip"
 if [[ -z "$TIMEOUT_BIN" ]]; then
     skip "watchrun" "no timeout binary available to safely bound this test"
 elif [[ $HAS_ENTR -eq 0 && $HAS_FSWATCH -eq 0 ]]; then
@@ -525,6 +527,7 @@ runs  "gitignore"          "gitignore go,macos"
 runs  "gstash"             "echo wipstash >> file1.txt && git add -A && git stash && gstash"
 runs  "grebase"            "grebase 1"
 runs  "gopen"              "gopen"
+runs  "gpr"                "gpr"
 runs  "gitbranch-rename"   "git checkout -q main && git checkout -q -b rename-old && gitbranch-rename rename-old rename-new && git checkout -q main"
 runs  "gitlog-graph"       "gitlog-graph"
 runs  "gcleanup"           "gcleanup"
@@ -576,7 +579,9 @@ fi
 # 5. NODE / NPM (npm binary fully mocked)
 #########################################################################
 section "Node/npm"
-run  "npmclean"     "npmclean"
+run  "npmclean(npm)"  "npmclean"
+run  "npmclean(yarn)" "touch yarn.lock && npmclean && [ ! -f yarn.lock ]"
+run  "npmclean(pnpm)" "touch pnpm-lock.yaml && npmclean && [ ! -f pnpm-lock.yaml ]"
 if [[ $HAS_JQ -eq 1 ]]; then
     run "npmscripts" "echo '{\"name\":\"m\",\"scripts\":{\"test\":\"echo t\"}}' > package.json && npmscripts"
 else
