@@ -48,4 +48,4 @@ if (Test-Path $targetFile) {
 
 Write-Host ""
 Write-Host "Sharmory successfully installed!" -ForegroundColor Cyan
-Write-Host "All 70+ dev shortcuts are ready to use in your terminal." -ForegroundColor Green
+Write-Host "All 142 dev shortcuts are ready to use in your terminal." -ForegroundColor Green

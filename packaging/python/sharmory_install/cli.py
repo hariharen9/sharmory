@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 from . import __version__
 
-ASSET_NAMES = ("functions.zsh", "functions.ps1")
+ASSET_NAMES = ("functions.zsh", "functions.bash", "functions.ps1")
 
 
 def _find_asset(name: str) -> Path:
@@ -45,17 +46,51 @@ def _copy_assets(dest_dir: Path) -> None:
         shutil.copy2(_find_asset(name), dest_dir / name)
 
 
+def _detect_unix_shell() -> str:
+    """Mirror the detection logic from install.sh.
+
+    Prefer the user's login shell ($SHELL); fall back to availability;
+    default to zsh.
+    """
+    login_shell = Path(os.environ.get("SHELL", "")).name
+    if login_shell == "zsh":
+        return "zsh"
+    if login_shell == "bash":
+        return "bash"
+    # Exotic login shell (fish, etc.) — prefer zsh if available, else bash.
+    try:
+        subprocess.run(["zsh", "--version"], capture_output=True, check=True)
+        return "zsh"
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+    return "bash"
+
+
 def install_unix() -> None:
     dest = Path.home() / ".sharmory"
+    # Always install all Unix function files so the user can switch shells
+    # without reinstalling.
     _copy_assets(dest)
-    rc = Path.home() / ".zshrc"
-    line = "[[ -f ~/.sharmory/functions.zsh ]] && source ~/.sharmory/functions.zsh"
-    _append_once(
-        rc,
-        "sharmory/functions.zsh",
-        f"\n# Sharmory — Dev shell toolkit\n{line}\n",
-    )
-    print("Installed to ~/.sharmory (Zsh). Run: source ~/.zshrc")
+
+    shell = _detect_unix_shell()
+    if shell == "zsh":
+        rc = Path.home() / ".zshrc"
+        line = "[[ -f ~/.sharmory/functions.zsh ]] && source ~/.sharmory/functions.zsh"
+        _append_once(
+            rc,
+            "sharmory/functions.zsh",
+            f"\n# Sharmory — Dev shell toolkit\n{line}\n",
+        )
+        print("Detected shell: zsh — installed to ~/.sharmory. Run: source ~/.zshrc")
+    else:
+        rc = Path.home() / ".bashrc"
+        line = "[[ -f ~/.sharmory/functions.bash ]] && source ~/.sharmory/functions.bash"
+        _append_once(
+            rc,
+            "sharmory/functions.bash",
+            f"\n# Sharmory — Dev shell toolkit\n{line}\n",
+        )
+        print("Detected shell: bash — installed to ~/.sharmory. Run: source ~/.bashrc")
 
 
 def install_windows() -> None:

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "sharmory"
 version = "0.1.0"
-description = "Installer for Sharmory - a dual-shell (Zsh + PowerShell) developer toolkit"
+description = "Installer for Sharmory - a triple-shell (Zsh, Bash, and PowerShell) developer toolkit"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.8"
@@ -27,6 +27,7 @@ Repository = "https://github.com/hariharen9/sharmory"
 include = [
   "packaging/python/sharmory_install",
   "functions.zsh",
+  "functions.bash",
   "functions.ps1",
   "README.md",
   "LICENSE",
@@ -37,5 +38,6 @@ bypass-selection = true
 
 [tool.hatch.build.targets.wheel.force-include]
 "packaging/python/sharmory_install" = "sharmory_install"
-"functions.zsh" = "sharmory_install/functions.zsh"
-"functions.ps1" = "sharmory_install/functions.ps1"
+"functions.zsh"  = "sharmory_install/functions.zsh"
+"functions.bash" = "sharmory_install/functions.bash"
+"functions.ps1"  = "sharmory_install/functions.ps1"

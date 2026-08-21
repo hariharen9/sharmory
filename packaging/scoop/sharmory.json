@@ -1,6 +1,6 @@
 {
     "version": "0.1.0",
-    "description": "Single-file Zsh and PowerShell library of developer shell functions",
+    "description": "Single-file Zsh, Bash, and PowerShell library of developer shell functions",
     "homepage": "https://github.com/hariharen9/sharmory",
     "license": "MIT",
     "url": "https://github.com/hariharen9/sharmory/archive/refs/tags/v0.1.0.zip",

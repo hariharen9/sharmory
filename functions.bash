@@ -1,11 +1,18 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 #
-# Sharmory — a collection of dev-focused zsh functions
-# Source this file from your .zshrc:
-#   [[ -f ~/.sharmory/functions.zsh ]] && source ~/.sharmory/functions.zsh
+# Sharmory — a collection of dev-focused Bash functions
+# (ported 1:1 from the Zsh original, functions.zsh)
+#
+# Requires Bash 4.0+ (uses associative arrays: `local -A`). macOS ships
+# Bash 3.2 by default — install a modern Bash via `brew install bash` and
+# make sure it comes first in $PATH, or just use it explicitly via
+# `/opt/homebrew/bin/bash` / `/usr/local/bin/bash`.
+#
+# Source this file from your .bashrc:
+#   [[ -f ~/.sharmory/functions.bash ]] && source ~/.sharmory/functions.bash
 #
 # The guard above ensures that if this file has any load-time error,
-# it never aborts .zshrc mid-execution (protecting your PATH and plugins).
+# it never aborts .bashrc mid-execution (protecting your PATH and plugins).
 #
 # Optional dependencies used by some functions (all fail gracefully if missing):
 #   fzf, jq, eza, gh, tldr, entr/fswatch, httpie, ncdu
@@ -48,10 +55,12 @@ unalias -- \
     2>/dev/null; true
 
 # Current version — bump this on every release
-typeset -g SHARMORY_VERSION="0.1.0"
+SHARMORY_VERSION="0.1.0"
 
 # Path of this file so sharmory-bench can source a clean copy
-typeset -g _SHARMORY_FILE="${${(%):-%x}:A}"
+# (BASH_SOURCE[0] is the path this file was sourced/executed as; resolve it
+# to an absolute path the same way Zsh's ${(%):-%x}:A} does.)
+_SHARMORY_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
 
 # Detect OS once so functions can branch cheaply
 _sharmory_os() {
@@ -228,7 +237,7 @@ emptydirs() {
     if [[ ! -t 0 ]]; then
         return 0
     fi
-    read "confirm?Delete these empty directories? (y/N) "
+    read -r -p "Delete these empty directories? (y/N) " confirm
     if [[ "$confirm" == "y" ]]; then
         echo "$found" | xargs -I{} rmdir "{}"
     fi
@@ -367,12 +376,17 @@ treelist() {
             tree --dirsfirst -C "$dir"
         fi
     else
-        # Pure Zsh fallback — no external tools needed
-        local base_depth=$(( ${#${dir%%/}//[^\/]} ))
+        # Pure Bash fallback — no external tools needed
+        local dir_trimmed="${dir%%/}"
+        local base_depth
+        base_depth=$(printf '%s' "$dir_trimmed" | tr -cd '/' | wc -c)
         find "$dir" -not -path '*/.git*' 2>/dev/null | sort | while IFS= read -r p; do
-            local depth=$(( ${#${p//[^\/]/}} - base_depth ))
-            local pad=${(l:$(( depth * 4 )):: :)}
-            print "${pad}${p:t}"
+            local slash_count
+            slash_count=$(printf '%s' "$p" | tr -cd '/' | wc -c)
+            local depth=$(( slash_count - base_depth ))
+            local pad
+            pad=$(printf '%*s' $(( depth * 4 )) '')
+            printf '%s%s\n' "$pad" "$(basename "$p")"
         done
     fi
 }
@@ -466,7 +480,7 @@ branchclean() {
     fi
     echo "Merged branches to delete:"
     echo "$merged"
-    read "confirm?Delete these? (y/N) "
+    read -r -p "Delete these? (y/N) " confirm
     [[ "$confirm" == "y" ]] && echo "$merged" | xargs -n 1 git branch -d
 }
 
@@ -492,7 +506,7 @@ gacp() {
     local branch
     branch=$(git branch --show-current)
     if [[ "$branch" == "main" || "$branch" == "master" ]]; then
-        read "confirm?⚠️  You're on '$branch'. Push directly? (y/N) "
+        read -r -p "⚠️  You're on '$branch'. Push directly? (y/N) " confirm
         [[ "$confirm" != "y" ]] && echo "Aborted." && return 1
     fi
     git add -A && git commit -m "$1" && git push origin "$branch"
@@ -757,7 +771,7 @@ dockerclean-images() {
         return 0
     fi
     docker images -f "dangling=true"
-    read "confirm?Remove these images? (y/N) "
+    read -r -p "Remove these images? (y/N) " confirm
     [[ "$confirm" == "y" ]] && docker rmi $dangling
 }
 
@@ -1571,7 +1585,7 @@ envdiff() {
 
     local changed=0
     # Keys removed in file2
-    for k in "${(@k)a}"; do
+    for k in "${!a[@]}"; do
         if [[ -z "${b[$k]+_}" ]]; then
             printf "  \033[31m- %s=%s\033[0m\n" "$k" "${a[$k]}"
             (( changed++ ))
@@ -1581,7 +1595,7 @@ envdiff() {
         fi
     done
     # Keys added in file2
-    for k in "${(@k)b}"; do
+    for k in "${!b[@]}"; do
         if [[ -z "${a[$k]+_}" ]]; then
             printf "  \033[32m+ %s=%s\033[0m\n" "$k" "${b[$k]}"
             (( changed++ ))
@@ -1995,7 +2009,19 @@ hist() {
     local selected
     selected=$(fc -l 1 | fzf --tac --no-sort --prompt="history> " | sed 's/^ *[0-9]* *//')
     if [[ -n "$selected" ]]; then
-        print -z "$selected"
+        # Zsh's `print -z` stuffs the command onto the next prompt line for
+        # editing. Bash has no direct equivalent outside of a `bind -x`
+        # keybinding widget. If hist is invoked from such a binding (where
+        # READLINE_LINE is set by readline), we stuff the line buffer the
+        # same way; otherwise we fall back to pushing it onto history (so a
+        # single Up-arrow recalls it) and echoing it for visibility.
+        if [[ -n "${READLINE_LINE+x}" ]]; then
+            READLINE_LINE="$selected"
+            READLINE_POINT=${#READLINE_LINE}
+        else
+            history -s "$selected"
+            echo "$selected"
+        fi
     fi
 }
 
@@ -2125,7 +2151,7 @@ jenk-jobs() {
 #########################################################################
 
 # Update Sharmory to the latest version from GitHub
-# Refreshes both functions.zsh and functions.bash so whichever shell the user
+# Refreshes both functions.bash and functions.zsh so whichever shell the user
 # runs next gets the latest version.
 sharmory-update() {
     local dir="${HOME}/.sharmory"
@@ -2133,7 +2159,7 @@ sharmory-update() {
     local failed=0
     echo "Updating Sharmory from GitHub..."
     mkdir -p "$dir"
-    for f in functions.zsh functions.bash; do
+    for f in functions.bash functions.zsh; do
         if curl -fsSL "${base_url}/${f}" -o "${dir}/${f}"; then
             echo "  ✅ ${f}"
         else
@@ -2142,7 +2168,7 @@ sharmory-update() {
         fi
     done
     if [[ $failed -eq 0 ]]; then
-        source "${dir}/functions.zsh"
+        source "${dir}/functions.bash"
         echo "Sharmory successfully updated and reloaded!"
     else
         echo "Update incomplete. Check your connection and try again."
@@ -2226,7 +2252,7 @@ _SHARMORY_REGISTRY=(
     'go^gobench^Run Go benchmarks with memory stats^gobench [pattern]^'
     'go^gonew^Scaffold a minimal Go module^gonew <module-path>^'
     'go^gowatch^Re-run Go tests on save^gowatch^entr'
-    'node^npmclean^Delete node_modules + lockfile and reinstall (npm/yarn/pnpm)^npmclean^'
+    'node^npmclean^Delete node_modules and reinstall^npmclean^'
     'node^npmscripts^List package.json scripts^npmscripts^jq'
     'node^npmoutdated^Show outdated npm dependencies^npmoutdated^'
     'node^npmsize^Size of node_modules^npmsize^'
@@ -2462,7 +2488,7 @@ _sharmory_prompt_and_run() {
             return 0
         fi
         # shellcheck disable=SC2086
-        _sharmory_run "$name" ${=line}
+        _sharmory_run "$name" $line
     else
         _sharmory_run "$name"
     fi
@@ -2533,13 +2559,15 @@ _sharmory_hud_menu() {
                 fi
                 ;;
             *)
-                if [[ "$cmd" == <-> ]]; then
+                if [[ "$cmd" =~ ^[0-9]+$ ]]; then
                     idx=$cmd
                     if (( idx < 1 || idx > ${#names[@]} )); then
                         echo "No command numbered $idx"
                         continue
                     fi
-                    _sharmory_prompt_and_run "${names[$idx]}"
+                    # Bash arrays are 0-indexed (Zsh's are 1-indexed), so
+                    # shift the 1-based menu number down by one.
+                    _sharmory_prompt_and_run "${names[$((idx - 1))]}"
                 else
                     _sharmory_prompt_and_run "$cmd"
                 fi
@@ -2591,7 +2619,7 @@ sharmory-doctor() {
         miss=$(( miss + 1 ))
     fi
 
-    local install_path="${HOME}/.sharmory/functions.zsh"
+    local install_path="${HOME}/.sharmory/functions.bash"
     if [[ -f "$install_path" ]]; then
         _sharmory_doctor_line "ok" "Install" "$install_path"
         ok=$(( ok + 1 ))
@@ -2600,20 +2628,20 @@ sharmory-doctor() {
         warn=$(( warn + 1 ))
     fi
 
-    # Check that functions.zsh is actually sourced from ~/.zshrc
-    local zshrc="$HOME/.zshrc"
-    if [[ -f "$zshrc" ]] && grep -q 'sharmory' "$zshrc" 2>/dev/null; then
-        _sharmory_doctor_line "ok" ".zshrc" "source line present"
+    # Check that functions.bash is actually sourced from ~/.bashrc
+    local bashrc="$HOME/.bashrc"
+    if [[ -f "$bashrc" ]] && grep -q 'sharmory' "$bashrc" 2>/dev/null; then
+        _sharmory_doctor_line "ok" ".bashrc" "source line present"
         ok=$(( ok + 1 ))
-    elif [[ -f "$zshrc" ]]; then
-        _sharmory_doctor_line "warn" ".zshrc" "no sharmory source line found in ~/.zshrc"
+    elif [[ -f "$bashrc" ]]; then
+        _sharmory_doctor_line "warn" ".bashrc" "no sharmory source line found in ~/.bashrc"
         warn=$(( warn + 1 ))
     else
-        _sharmory_doctor_line "warn" ".zshrc" "~/.zshrc not found"
+        _sharmory_doctor_line "warn" ".bashrc" "~/.bashrc not found"
         warn=$(( warn + 1 ))
     fi
 
-    _sharmory_doctor_line "ok" "Shell" "zsh ${ZSH_VERSION:-unknown}"
+    _sharmory_doctor_line "ok" "Shell" "bash ${BASH_VERSION:-unknown}"
     ok=$(( ok + 1 ))
 
     if command -v git &>/dev/null; then
@@ -2633,10 +2661,15 @@ sharmory-doctor() {
         miss=$(( miss + 1 ))
     fi
 
-    local pubs
-    pubs=(~/.ssh/*.pub(N))
-    if (( ${#pubs} )); then
-        _sharmory_doctor_line "ok" "SSH" "${#pubs} public key(s) in ~/.ssh"
+    local -a pubs
+    # (N) in Zsh is the null-glob qualifier for a single pattern; the
+    # portable Bash equivalent is toggling the nullglob shopt around the
+    # expansion so a no-match glob expands to nothing instead of itself.
+    shopt -s nullglob
+    pubs=( "$HOME"/.ssh/*.pub )
+    shopt -u nullglob
+    if (( ${#pubs[@]} )); then
+        _sharmory_doctor_line "ok" "SSH" "${#pubs[@]} public key(s) in ~/.ssh"
         ok=$(( ok + 1 ))
     else
         _sharmory_doctor_line "warn" "SSH" "no ~/.ssh/*.pub keys found"
@@ -2840,7 +2873,7 @@ sharmory-setup() {
         echo "  hint: $(_sharmory_hint "$t")"
         echo -n "  [i/s/a/q] "
         IFS= read -r choice || return 0
-        choice=${choice:l}
+        choice=${choice,,}
         case "$choice" in
             i|install|y|yes)
                 _sharmory_setup_install "$t" || echo "Install of $t failed (skipped)."
@@ -2865,7 +2898,7 @@ sharmory-setup() {
     echo "Done. New tools are available in new shells (or after refreshing PATH)."
 }
 
-# Time how long a clean Zsh takes to source this file (not Oh-My-Zsh, not your .zshrc).
+# Time how long a clean Bash takes to source this file (not Oh-My-Bash, not your .bashrc).
 # Usage: sharmory-bench [runs]
 sharmory-bench() {
     local n=${1:-10}
@@ -2873,9 +2906,9 @@ sharmory-bench() {
         echo "Usage: sharmory-bench [runs]"
         return 1
     fi
-    local src=${_SHARMORY_FILE:-$HOME/.sharmory/functions.zsh}
+    local src=${_SHARMORY_FILE:-$HOME/.sharmory/functions.bash}
     if [[ ! -f "$src" ]]; then
-        echo "Cannot find functions.zsh at: $src"
+        echo "Cannot find functions.bash at: $src"
         return 1
     fi
 
@@ -2886,22 +2919,33 @@ sharmory-bench() {
 
     local i raw
     local -a times
-    zsh -c "emulate -L zsh; zmodload zsh/datetime; source ${(q)src}" >/dev/null 2>&1 || true
+    # Bash 5.0+ exposes $EPOCHREALTIME natively (no zmodload equivalent
+    # needed). On older Bash (no EPOCHREALTIME) we fall back to `date +%s.%N`
+    # (GNU date; BSD/macOS date lacks %N, in which case timing degrades to
+    # whole-second resolution — install GNU coreutils or a modern Bash for
+    # meaningful numbers).
+    bash -c 'source "$0"' "$src" >/dev/null 2>&1 || true
     for (( i = 1; i <= n; i++ )); do
-        raw=$(zsh -c "
-            emulate -L zsh
-            zmodload zsh/datetime
-            local s=\$EPOCHREALTIME
-            source ${(q)src}
-            printf '%.3f' \$(( (EPOCHREALTIME - s) * 1000 ))
-        " 2>/dev/null) || continue
+        raw=$(bash -c '
+            src="$0"
+            if [[ -n "${EPOCHREALTIME:-}" ]]; then
+                s=$EPOCHREALTIME
+                source "$src"
+                awk -v a="$EPOCHREALTIME" -v b="$s" "BEGIN{printf \"%.3f\", (a-b)*1000}"
+            else
+                s=$(date +%s.%N)
+                source "$src"
+                e=$(date +%s.%N)
+                awk -v a="$e" -v b="$s" "BEGIN{printf \"%.3f\", (a-b)*1000}"
+            fi
+        ' "$src" 2>/dev/null) || continue
         [[ -z "$raw" ]] && continue
         times+=("$raw")
         printf "  run %-3d %8s ms\n" "$i" "$raw"
     done
 
-    if (( ${#times} < 1 )); then
-        echo "Could not spawn a clean zsh to measure."
+    if (( ${#times[@]} < 1 )); then
+        echo "Could not spawn a clean bash to measure."
         return 1
     fi
     local min max avg
@@ -2913,13 +2957,13 @@ sharmory-bench() {
     printf "  avg  %s ms\n" "$avg"
     printf "  max  %s ms\n" "$max"
     echo ""
-    echo "  Oh-My-Zsh commonly adds 200-800 ms to every new tab."
+    echo "  Oh-My-Zsh/Bash frameworks commonly add 200-800 ms to every new tab."
     echo "  Sharmory is one sourced file — no plugin manager."
     if awk -v a="$avg" 'BEGIN { exit !(a < 5) }'; then
         echo "  Badge: sub-5ms source time on this machine."
     else
         echo "  This host averaged ${avg} ms (disk/antivirus can dominate)."
-        echo "  The Zsh target is still under 5 ms on a typical Mac/Linux SSD."
+        echo "  The target is still under 5 ms on a typical Mac/Linux SSD."
     fi
 }
 

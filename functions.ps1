@@ -1848,17 +1848,26 @@ function jenk-jobs {
 # Update Sharmory to the latest version from GitHub
 function sharmory-update {
     $targetDir = Join-Path $HOME "sharmory"
-    $targetFile = Join-Path $targetDir "functions.ps1"
+    $baseUrl = "https://raw.githubusercontent.com/hariharen9/sharmory/main"
     Write-Host "Updating Sharmory from GitHub..."
     if (-not (Test-Path $targetDir)) {
         New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
     }
-    try {
-        Invoke-WebRequest "https://raw.githubusercontent.com/hariharen9/sharmory/main/functions.ps1" -OutFile $targetFile -UseBasicParsing
-        . $targetFile
+    $failed = $false
+    foreach ($f in @("functions.ps1", "functions.zsh", "functions.bash")) {
+        try {
+            Invoke-WebRequest "$baseUrl/$f" -OutFile (Join-Path $targetDir $f) -UseBasicParsing
+            Write-Host "  [ok] $f"
+        } catch {
+            Write-Host "  [fail] $f — $_"
+            $failed = $true
+        }
+    }
+    if (-not $failed) {
+        . (Join-Path $targetDir "functions.ps1")
         Write-Host "Sharmory successfully updated and reloaded!"
-    } catch {
-        Write-Host "Failed to update Sharmory: $_"
+    } else {
+        Write-Host "Update incomplete. Check your connection and try again."
     }
 }
 

@@ -1,0 +1,15 @@
+# Shell scripts must always use LF so they work correctly on all Unix/WSL/macOS environments.
+*.sh    text eol=lf
+*.bash  text eol=lf
+*.zsh   text eol=lf
+*.rb    text eol=lf
+
+# PowerShell scripts use CRLF (Windows convention).
+*.ps1   text eol=crlf
+
+# Keep JSON, TOML, YAML, and Markdown as text (let git decide eol).
+*.json  text
+*.toml  text
+*.yaml  text
+*.yml   text
+*.md    text

@@ -5,18 +5,24 @@
 [![npm downloads](https://img.shields.io/npm/dm/sharmory?label=npm%20downloads%2Fmo)](https://www.npmjs.com/package/sharmory)
 [![PyPI downloads](https://img.shields.io/pypi/dm/sharmory?label=PyPI%20downloads%2Fmo)](https://pypi.org/project/sharmory/)
 
-A single-file library of dev-focused Zsh & PowerShell functions — Git shortcuts, Docker/K8s helpers,
-Go/Node/Python workflow utilities, networking checks, security/encoding helpers, and
+A single-file library of dev-focused shell functions for **Zsh, Bash, and PowerShell** — Git shortcuts,
+Docker/K8s helpers, Go/Node/Python workflow utilities, networking checks, security/encoding helpers, and
 general productivity tools. No plugin manager, no framework — just source one file.
 
 The GitHub badge counts **Release page asset downloads** (source zip/tarball). Homebrew tap, Scoop, `curl | bash`, and `irm | iex` are not included in that number. npm and PyPI have their own counters.
 
 ## 🚀 Quick Install (1-Line)
 
-**macOS / Linux / WSL (Zsh)**
+**macOS / Linux / WSL (Zsh or Bash — auto-detected)**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hariharen9/sharmory/main/install.sh | bash
 ```
+
+The installer detects your login shell and configures the right file automatically:
+- **Zsh** → installs `functions.zsh`, patches `~/.zshrc`
+- **Bash** → installs `functions.bash`, patches `~/.bashrc`
+
+Both files are always downloaded to `~/.sharmory/` so you can switch shells without re-installing.
 
 **Windows (PowerShell 5.1+ & PowerShell Core 7+)**
 ```powershell
@@ -27,10 +33,10 @@ irm https://raw.githubusercontent.com/hariharen9/sharmory/main/install.ps1 | iex
 
 | Manager | Install |
 |---|---|
-| Homebrew | `brew tap hariharen9/tap && brew install sharmory` — then add `source "$(brew --prefix)/opt/sharmory/functions.zsh"` to `~/.zshrc` |
+| Homebrew | `brew tap hariharen9/tap && brew install sharmory` — then source `functions.zsh` (Zsh) or `functions.bash` (Bash) from `$(brew --prefix)/opt/sharmory/` |
 | Scoop | `scoop bucket add hariharen9 https://github.com/hariharen9/scoop-bucket && scoop install sharmory` — then dot-source `functions.ps1` in `$PROFILE` |
-| npm | `npm install -g sharmory && sharmory-install` |
-| pip | `pip install sharmory && sharmory-install` |
+| npm | `npm install -g sharmory && sharmory-install` — auto-detects Zsh or Bash |
+| pip | `pip install sharmory && sharmory-install` — auto-detects Zsh or Bash |
 
 ## Command HUD
 
@@ -60,7 +66,7 @@ To update Sharmory to the latest version at any time, run:
 sharmory-update
 ```
 
-*(Works natively in both Zsh and PowerShell).*
+*(Works natively in Zsh, Bash, and PowerShell).*
 
 ---
 
@@ -77,8 +83,26 @@ source ~/.zshrc
 
 Or without git:
 ```bash
-curl -o ~/.sharmory-functions.zsh https://raw.githubusercontent.com/hariharen9/sharmory/main/functions.zsh
-echo 'source ~/.sharmory-functions.zsh' >> ~/.zshrc
+curl -o ~/.sharmory/functions.zsh https://raw.githubusercontent.com/hariharen9/sharmory/main/functions.zsh
+echo '[[ -f ~/.sharmory/functions.zsh ]] && source ~/.sharmory/functions.zsh' >> ~/.zshrc
+```
+</details>
+
+<details>
+<summary><b>Manual Bash Setup</b></summary>
+
+Requires **Bash 4.0+**. macOS ships Bash 3.2 — install a modern version first: `brew install bash`.
+
+```bash
+git clone https://github.com/hariharen9/sharmory.git ~/.sharmory
+echo '[[ -f ~/.sharmory/functions.bash ]] && source ~/.sharmory/functions.bash' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Or without git:
+```bash
+curl -o ~/.sharmory/functions.bash https://raw.githubusercontent.com/hariharen9/sharmory/main/functions.bash
+echo '[[ -f ~/.sharmory/functions.bash ]] && source ~/.sharmory/functions.bash' >> ~/.bashrc
 ```
 </details>
 
@@ -351,25 +375,36 @@ standard alternative) if it is missing.
 | `sharmory doctor` | `sharmory doctor` | Environment health check — shell, git identity, SSH keys, Docker daemon, optional tools, version |
 | `sharmory setup` | `sharmory setup` | Install optional CLI tools (`fzf`, `jq`, `eza`, `tldr`) |
 | `sharmory bench` | `sharmory bench [n]` | Measure Sharmory's source time in a clean shell (default 10 runs) |
-| `sharmory-update` | `sharmory-update` | Download and apply the latest `functions.zsh` / `functions.ps1` from GitHub |
+| `sharmory-update` | `sharmory-update` | Download and apply the latest `functions.zsh` / `functions.bash` / `functions.ps1` from GitHub |
 
 ## Testing
 
-Both platforms ship a sandboxed self-test that exercises every function without
-touching your real system: no real docker/kubectl calls, no real network requests,
-no real processes killed, no real files outside a throwaway temp directory. External
-tools that would otherwise hit the network or a live daemon (`docker`, `kubectl`,
-`curl`/`Invoke-RestMethod`, `dig`/`Resolve-DnsName`, `ssh-keygen`, `fzf`, etc.) are
-mocked for the duration of the run, and the whole sandbox is deleted afterward
-whether the run passes or fails.
+All three implementations ship a sandboxed self-test that exercises every function
+without touching your real system: no real docker/kubectl calls, no real network
+requests, no real processes killed, no real files outside a throwaway temp directory.
+External tools that would otherwise hit the network or a live daemon (`docker`,
+`kubectl`, `curl`/`Invoke-RestMethod`, `dig`/`Resolve-DnsName`, `ssh-keygen`, `fzf`,
+etc.) are mocked for the duration of the run, and the whole sandbox is deleted
+afterward whether the run passes or fails.
 
-**macOS/Linux:**
+**Zsh (macOS/Linux):**
 
 ```bash
 chmod +x test-sharmory.zsh
-./test-sharmory.zsh          # tests functions.zsh in the same directory
-./test-sharmory.zsh path/to/functions.zsh   # or point at a specific file
+./test-sharmory.zsh                          # tests functions.zsh in the same directory
+./test-sharmory.zsh path/to/functions.zsh    # or point at a specific file
 ```
+
+**Bash (macOS/Linux — requires Bash 4.0+):**
+
+```bash
+chmod +x test-sharmory.bash
+./test-sharmory.bash                         # tests functions.bash in the same directory
+./test-sharmory.bash path/to/functions.bash  # or point at a specific file
+```
+
+> **macOS note:** The system `bash` is 3.2. Run the test with a modern Bash:
+> `brew install bash && /opt/homebrew/bin/bash test-sharmory.bash`
 
 **Windows:**
 
@@ -383,7 +418,7 @@ Each run prints a PASS/FAIL/SKIP line per function and a summary count.
 Exit code is `0` if everything passed or was cleanly skipped, `1` if anything
 actually failed — safe to wire into CI.
 
-**Platform Verification:** Both the Zsh and PowerShell implementations are verified end-to-end against live interpreters with 100% sandboxed test suites. In Zsh, early testing caught variable collisions with the special `$path` array. In PowerShell, testing verified parser compatibility across Windows PowerShell 5.1 and modern PowerShell Core (7+), ensuring clean dot-sourcing into `$PROFILE` with zero startup errors.
+**Platform Verification:** All three implementations (Zsh, Bash, PowerShell) are verified end-to-end against live interpreters with fully sandboxed test suites. In Zsh, early testing caught variable collisions with the special `$path` array. In Bash, the test runner was adapted to work with Bash 3.2 (macOS default) as well as Bash 4.0+ (required for the functions themselves). In PowerShell, testing verified parser compatibility across Windows PowerShell 5.1 and modern PowerShell Core (7+).
 
 ## ⚠️ Plugin Manager Compatibility
 
@@ -391,7 +426,7 @@ actually failed — safe to wire into CI.
 
 ## 🗑️ Uninstalling
 
-### macOS / Linux / WSL (Zsh)
+### macOS / Linux / WSL (Zsh or Bash)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hariharen9/sharmory/main/uninstall.sh | bash
 ```
@@ -409,7 +444,13 @@ PRs adding new functions welcome. Keep the style consistent:
 - `Usage:` line printed when required args are missing
 - guard against missing optional dependencies rather than hard-failing
 - a one- or two-line comment above the function explaining what it does
+- new functions must be added to **all three files** (`functions.zsh`, `functions.bash`, `functions.ps1`) and the registry in each, with a matching test case in each test file
 
 ## License
 
 MIT
+
+<!-- # Custom Footer -->
+<p align="center">
+  <img src="https://raw.githubusercontent.com/trinib/trinib/82213791fa9ff58d3ca768ddd6de2489ec23ffca/images/footer.svg" width="100%">
+</p>

@@ -35,24 +35,46 @@ function appendOnce(filePath, needle, block) {
   console.log(`Added Sharmory to ${filePath}`);
 }
 
+// Mirror the detection logic from install.sh: prefer the login shell ($SHELL),
+// fall back to checking availability, default to zsh.
+function detectUnixShell() {
+  const loginShell = path.basename(process.env.SHELL || "");
+  if (loginShell === "zsh") return "zsh";
+  if (loginShell === "bash") return "bash";
+  // Exotic login shell (fish, etc.) — prefer zsh if available, else bash.
+  const { execSync } = require("child_process");
+  try { execSync("command -v zsh", { stdio: "ignore" }); return "zsh"; } catch (_) {}
+  return "bash";
+}
+
 function installUnix() {
   const destDir = path.join(os.homedir(), ".sharmory");
-  copyAsset("functions.zsh", destDir);
-  copyAsset("functions.ps1", destDir);
-  const rc = path.join(os.homedir(), ".zshrc");
-  const line = "[[ -f ~/.sharmory/functions.zsh ]] && source ~/.sharmory/functions.zsh";
-  appendOnce(
-    rc,
-    "sharmory/functions.zsh",
-    `\n# Sharmory — Dev shell toolkit\n${line}\n`
-  );
-  console.log("Installed to ~/.sharmory (Zsh). Run: source ~/.zshrc");
+
+  // Always install all Unix function files so the user can switch shells
+  // without reinstalling.
+  copyAsset("functions.zsh",  destDir);
+  copyAsset("functions.bash", destDir);
+  copyAsset("functions.ps1",  destDir);
+
+  const shell = detectUnixShell();
+  if (shell === "zsh") {
+    const rc   = path.join(os.homedir(), ".zshrc");
+    const line = "[[ -f ~/.sharmory/functions.zsh ]] && source ~/.sharmory/functions.zsh";
+    appendOnce(rc, "sharmory/functions.zsh", `\n# Sharmory — Dev shell toolkit\n${line}\n`);
+    console.log(`Detected shell: zsh — installed to ~/.sharmory. Run: source ~/.zshrc`);
+  } else {
+    const rc   = path.join(os.homedir(), ".bashrc");
+    const line = "[[ -f ~/.sharmory/functions.bash ]] && source ~/.sharmory/functions.bash";
+    appendOnce(rc, "sharmory/functions.bash", `\n# Sharmory — Dev shell toolkit\n${line}\n`);
+    console.log(`Detected shell: bash — installed to ~/.sharmory. Run: source ~/.bashrc`);
+  }
 }
 
 function installWindows() {
   const destDir = path.join(os.homedir(), "sharmory");
-  copyAsset("functions.ps1", destDir);
-  copyAsset("functions.zsh", destDir);
+  copyAsset("functions.ps1",  destDir);
+  copyAsset("functions.zsh",  destDir);
+  copyAsset("functions.bash", destDir);
   const documents = path.join(os.homedir(), "Documents");
   const candidates = [
     process.env.PROFILE,

@@ -1,7 +1,7 @@
 {
   "name": "sharmory",
   "version": "0.1.0",
-  "description": "Installer for Sharmory - a dual-shell (Zsh + PowerShell) developer toolkit",
+  "description": "Installer for Sharmory - a triple-shell (Zsh, Bash, and PowerShell) developer toolkit",
   "license": "MIT",
   "author": "Hariharen",
   "bin": {
@@ -9,6 +9,7 @@
   },
   "files": [
     "functions.zsh",
+    "functions.bash",
     "functions.ps1",
     "packaging/npm/install.js",
     "LICENSE",
