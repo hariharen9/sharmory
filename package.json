@@ -1,6 +1,6 @@
 {
   "name": "sharmory",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Installer for Sharmory - a triple-shell (Zsh, Bash, and PowerShell) developer toolkit",
   "license": "MIT",
   "author": "Hariharen",

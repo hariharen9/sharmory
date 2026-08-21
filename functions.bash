@@ -71,7 +71,7 @@ unalias -- \
     2>/dev/null; true
 
 # Current version — bump this on every release
-SHARMORY_VERSION="1.0.0"
+SHARMORY_VERSION="1.1.0"
 
 # Path of this file so sharmory-bench can source a clean copy
 # (BASH_SOURCE[0] is the path this file was sourced/executed as; resolve it

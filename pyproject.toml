@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sharmory"
-version = "1.0.0"
+version = "1.1.0"
 description = "Installer for Sharmory - a triple-shell (Zsh, Bash, and PowerShell) developer toolkit"
 readme = "README.md"
 license = "MIT"

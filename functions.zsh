@@ -64,7 +64,7 @@ unalias -- \
     2>/dev/null; true
 
 # Current version — bump this on every release
-typeset -g SHARMORY_VERSION="1.0.0"
+typeset -g SHARMORY_VERSION="1.1.0"
 
 # Path of this file so sharmory-bench can source a clean copy
 typeset -g _SHARMORY_FILE="${${(%):-%x}:A}"
