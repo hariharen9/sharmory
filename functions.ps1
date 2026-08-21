@@ -1888,8 +1888,10 @@ function nodeinfo {
     $scripts  = ($p.scripts.PSObject.Properties | Measure-Object).Count
     $deps     = if ($p.dependencies)    { ($p.dependencies.PSObject.Properties    | Measure-Object).Count } else { 0 }
     $devdeps  = if ($p.devDependencies) { ($p.devDependencies.PSObject.Properties | Measure-Object).Count } else { 0 }
-    Write-Host "  Name         : $($p.name ?? '(none)')"
-    Write-Host "  Version      : $($p.version ?? '(none)')"
+    $pkgName  = if ($p.name)    { $p.name }    else { '(none)' }
+    $pkgVer   = if ($p.version) { $p.version } else { '(none)' }
+    Write-Host "  Name         : $pkgName"
+    Write-Host "  Version      : $pkgVer"
     Write-Host "  Scripts      : $scripts"
     Write-Host "  Dependencies : $deps prod, $devdeps dev"
 }
