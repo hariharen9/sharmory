@@ -42,7 +42,7 @@ fi
 REAL_OPENSSL="$(command -v openssl 2>/dev/null)"
 HAS_JQ=0;      command -v jq &>/dev/null      && HAS_JQ=1
 HAS_PY=0;      command -v python3 &>/dev/null && HAS_PY=1
-HAS_PIP=0;     command -v pip3 &>/dev/null    && HAS_PIP=1
+HAS_PIP=0;     command -v pip3 &>/dev/null || command -v pip &>/dev/null && HAS_PIP=1
 HAS_TAR=0;     command -v tar &>/dev/null     && HAS_TAR=1
 
 #########################################################################
@@ -116,13 +116,94 @@ esac
 exit 0
 EOF
 
-# --- go / npm: no-op, always succeed ---
-for cmd in go npm; do
+# --- go: no-op for all subcommands, always succeed ---
+cat > "$MOCKBIN/go" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    env)    case "$2" in
+                GOROOT)     echo "/usr/local/go" ;;
+                GOPATH)     echo "$HOME/go" ;;
+                GOMODCACHE) echo "$HOME/go/pkg/mod" ;;
+                GOPROXY)    echo "https://proxy.golang.org" ;;
+                *)          echo "GOENV=mock" ;;
+            esac ;;
+    version) echo "go version go1.22.0 linux/amd64" ;;
+    list)    echo "example.com/mockmod" ;;
+    *)       : ;;
+esac
+exit 0
+EOF
+
+# --- npm / yarn / pnpm / node / nodemon: no-op, always succeed ---
+for cmd in npm yarn pnpm nodemon; do
 cat > "$MOCKBIN/$cmd" <<EOF
 #!/usr/bin/env bash
 exit 0
 EOF
 done
+
+# --- node: handles --version and basic eval for nodeinfo ---
+cat > "$MOCKBIN/node" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "--version" ]]; then echo "v20.0.0"; exit 0; fi
+if [[ "$1" == "-e" ]]; then
+    # Minimal evaluation for nodeinfo's node -e calls
+    case "$2" in
+        *p.name*)    echo "mock-package" ;;
+        *p.version*) echo "1.0.0" ;;
+        *scripts*)   echo "2" ;;
+        *dependencies*) echo "3" ;;
+        *devDependencies*) echo "1" ;;
+        *) echo "0" ;;
+    esac
+    exit 0
+fi
+exit 0
+EOF
+
+# --- pip: handle freeze/list/install subcommands ---
+cat > "$MOCKBIN/pip" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    freeze)  echo "requests==2.28.0" ;;
+    list)    printf "Package  Version\n------- -------\nrequests 2.28.0\n" ;;
+    install) exit 0 ;;
+    *)       exit 0 ;;
+esac
+exit 0
+EOF
+cat > "$MOCKBIN/pip3" <<'EOF'
+#!/usr/bin/env bash
+exec "$(dirname "$0")/pip" "$@"
+EOF
+
+# --- tsc: no-op type-check mock ---
+cat > "$MOCKBIN/tsc" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+# --- ruff / flake8 / mypy / pytest: always pass with mock output ---
+for cmd in ruff flake8 mypy pytest govulncheck; do
+cat > "$MOCKBIN/$cmd" <<EOF
+#!/usr/bin/env bash
+echo "[mock] $cmd \$*"
+exit 0
+EOF
+done
+
+# --- npx: no-op ---
+cat > "$MOCKBIN/npx" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+# --- fnm: no-op version manager mock ---
+cat > "$MOCKBIN/fnm" <<'EOF'
+#!/usr/bin/env bash
+echo "[mock] fnm $*"
+exit 0
+EOF
 
 # --- ssh-keygen: write fake key files instead of prompting for a passphrase ---
 cat > "$MOCKBIN/ssh-keygen" <<'EOF'
@@ -565,35 +646,62 @@ run  "kport"                "kport 8080 mock-pod 80"
 # 4. GO (go binary fully mocked — no real build/test runs)
 #########################################################################
 section "Go"
-run  "covreport"   "covreport"
-run  "gomodwhy"    "gomodwhy example.com/mockmod"
-run  "goclean"     "goclean"
-run  "goupdate"    "goupdate"
-run  "gobench"     "gobench"
-run  "gonew"       "mkdir -p gonew_test && cd gonew_test && gonew example.com/mocktest"
+run  "covreport"      "covreport"
+run  "gomodwhy"       "gomodwhy example.com/mockmod"
+run  "goclean"        "goclean"
+run  "goupdate"       "goupdate"
+run  "gobench"        "gobench"
+run  "gonew"          "mkdir -p gonew_test && cd gonew_test && gonew example.com/mocktest"
 if [[ -z "$TIMEOUT_BIN" ]]; then
     skip "gowatch" "no timeout binary available to safely bound this test"
 elif [[ $HAS_ENTR -eq 0 ]]; then
     skip "gowatch" "entr not installed"
 else
-    run "gowatch"  "gowatch"
+    run "gowatch"     "gowatch"
 fi
+run  "gorace"         "gorace"
+run  "gobuild"        "gobuild"
+run  "goxbuild"       "goxbuild linux amd64"
+run  "goxbuild(win)"  "goxbuild windows amd64"
+run  "gocover-func"   "gocover-func"
+run  "goenv"          "goenv"
+run  "golist"         "golist"
+run  "goversion"      "goversion"
+run  "gotest"         "gotest"
+run  "gomod-name"     "printf 'module example.com/testmod\n\ngo 1.21\n' > go.mod && gomod-name | grep -q example.com; rm -f go.mod"
+run  "govscan"        "govscan"
+run  "goimpl"         "goimpl fmt.Stringer"
 
 #########################################################################
-# 5. NODE / NPM (npm binary fully mocked)
+# 5. NODE / NPM (npm/node binary fully mocked)
 #########################################################################
 section "Node/npm"
-run  "npmclean"     "npmclean"
+run  "npmclean"       "npmclean"
 if [[ $HAS_JQ -eq 1 ]]; then
-    run "npmscripts" "echo '{\"name\":\"m\",\"scripts\":{\"test\":\"echo t\"}}' > package.json && npmscripts"
+    run "npmscripts"  "echo '{\"name\":\"m\",\"scripts\":{\"test\":\"echo t\"}}' > package.json && npmscripts"
 else
     skip "npmscripts" "jq not found"
 fi
-run  "npmoutdated"  "npmoutdated"
-run  "npmsize"      "mkdir -p node_modules && npmsize"
+run  "npmoutdated"    "npmoutdated"
+run  "npmsize"        "mkdir -p node_modules && npmsize"
+run  "nodeversion"    "nodeversion"
+run  "nvmuse"         "nvmuse 20; true"
+run  "tscheck"        "tscheck"
+run  "npxrun"         "npxrun cowsay hello"
+run  "npmglobal"      "npmglobal"
+run  "npmlink"        "npmlink"
+run  "noderepl"       "echo '' | noderepl; true"
+run  "npmaudit"       "npmaudit; true"
+run  "nodeinfo"       "nodeinfo"
+run  "npmdedup"       "npmdedup"
+if [[ -z "$TIMEOUT_BIN" ]]; then
+    skip "npmwatch" "no timeout binary available to safely bound this test"
+else
+    run  "npmwatch"   "npmwatch dev; true"
+fi
 
 #########################################################################
-# 6. PYTHON
+# 6. PYTHON (pip mocked — no real packages installed)
 #########################################################################
 section "Python"
 if [[ $HAS_PY -eq 1 ]]; then
@@ -601,11 +709,37 @@ if [[ $HAS_PY -eq 1 ]]; then
 else
     skip "venvcreate" "python3 not found"
 fi
-run  "pyclean"   "mkdir -p __pycache__ && touch __pycache__/x.pyc dummy.pyc && pyclean"
-if [[ $HAS_PIP -eq 1 ]]; then
-    run "pyfreeze" "pyfreeze"
+run  "pyclean"              "mkdir -p __pycache__ && touch __pycache__/x.pyc dummy.pyc && pyclean"
+run  "pyfreeze"             "pyfreeze"
+run  "pipinstall(present)"  "printf 'requests==2.28.0\n' > requirements.txt && pipinstall"
+run  "pipinstall(missing)"  "rm -f requirements.txt && pipinstall; [ \$? -ne 0 ]"
+run  "pyversion"            "pyversion; true"
+run  "pycheck"              "pycheck .; true"
+run  "pytest-run"           "pytest-run; true"
+if [[ -z "$TIMEOUT_BIN" ]]; then
+    skip "pywatch" "no timeout binary available to safely bound this test"
+elif [[ $HAS_ENTR -eq 0 ]]; then
+    skip "pywatch" "entr not installed"
 else
-    skip "pyfreeze" "pip3 not found"
+    run  "pywatch"          "pywatch .; true"
+fi
+run  "pydeps"               "pydeps"
+run  "pyupgrade"            "printf 'requests==2.28.0\n' > requirements.txt && pyupgrade"
+run  "pyrequirements-diff"  "printf 'requests==2.28.0\n' > requirements.txt && pyrequirements-diff; true"
+if [[ $HAS_PY -eq 1 ]]; then
+    run "pyrun"             "printf 'print(\"hello\")\n' > /tmp/sharmory-pyrun-test.py && pyrun /tmp/sharmory-pyrun-test.py | grep -q hello; rm -f /tmp/sharmory-pyrun-test.py"
+else
+    skip "pyrun"            "python3 not found"
+fi
+if [[ $HAS_PY -eq 1 ]]; then
+    run "pyprofile"         "printf 'print(\"hi\")\n' > /tmp/sharmory-pprof-test.py && pyprofile /tmp/sharmory-pprof-test.py; rm -f /tmp/sharmory-pprof-test.py"
+else
+    skip "pyprofile"        "python3 not found"
+fi
+if [[ $HAS_PY -eq 1 ]]; then
+    run "pyvenv"            "rm -rf .venv && pyvenv"
+else
+    skip "pyvenv"           "python3 not found"
 fi
 
 #########################################################################

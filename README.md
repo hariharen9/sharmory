@@ -131,8 +131,16 @@ Most functions work with only core system tools. A few optional tools provide en
 | `fzf` | `fcd`, `ftext`, `dsh`, `k8sctx`, `klogs`, `kexec`, `fkill`, `gswitch` |
 | `jq` | `npmscripts`, `jenk-crumb`, `jenk-jobs`, `jsonpp` |
 | `eza` | `lsd` |
-| `entr` or `fswatch` | `watchrun`, `gowatch` |
+| `entr` or `fswatch` | `watchrun`, `gowatch`, `pywatch` |
 | `tldr` | `cheat` (falls back to `man` / `Get-Help`) |
+| `ruff` / `flake8` / `pyflakes` | `pycheck` (linting — first found wins) |
+| `mypy` | `pycheck` (type-checking) |
+| `pytest` | `pytest-run`, `pywatch` |
+| `nvm` or `fnm` | `nvmuse` |
+| `tsc` | `tscheck` |
+| `nodemon` | `npmwatch` (falls back to `entr`) |
+| `uv` | `pyvenv` (falls back to `python3 -m venv`) |
+| `govulncheck` | `govscan` (auto-installs via `go install` if missing) |
 
 Every function checks for its dependency and fails gracefully (or falls back to a
 standard alternative) if it is missing.
@@ -143,9 +151,9 @@ standard alternative) if it is missing.
 - **Git** — `gacp`, `gclone`, `gswitch`, `gstash`, `grebase`, `gcamend`, `gdiffstage`, `grecentbranch`, `gpr`, `gopen`, `gwip`, `gunwip`, `gitundo`, `gitprune`, `branchclean`, `branchage`, `prdiff`, `gitlog-today`, `gitlog-graph`, `gitcontributors`, `gitsize`, `gitconflicts`, `gitignore`, `gitbranch-rename`, `gcleanup`
 - **Docker** — `dockernuke`, `dockerclean-images`, `dclean`, `dockerlogs`, `dockersizes`, `denv`, `dbuild`, `dsh`
 - **Kubernetes** — `kns`, `ktop`, `kevents`, `kdesc`, `kport`, `k8sctx`, `klogs`, `kexec`
-- **Go** — `gonew`, `gowatch`, `covreport`, `goclean`, `goupdate`, `gomodwhy`, `gobench`
-- **Node/npm** — `npmclean`, `npmscripts`, `npmoutdated`, `npmsize`
-- **Python** — `venvcreate`, `pyclean`, `pyfreeze`
+- **Go** — `gonew`, `gowatch`, `covreport`, `goclean`, `goupdate`, `gomodwhy`, `gobench`, `gorace`, `gobuild`, `goxbuild`, `gocover-func`, `goenv`, `golist`, `goversion`, `gotest`, `gomod-name`, `govscan`, `goimpl`
+- **Node/npm** — `npmclean`, `npmscripts`, `npmoutdated`, `npmsize`, `nodeversion`, `nvmuse`, `tscheck`, `npxrun`, `npmglobal`, `npmlink`, `noderepl`, `npmaudit`, `nodeinfo`, `npmdedup`, `npmwatch`
+- **Python** — `venvcreate`, `pyclean`, `pyfreeze`, `pipinstall`, `pyversion`, `pycheck`, `pytest-run`, `pywatch`, `pydeps`, `pyupgrade`, `pyrequirements-diff`, `pyrun`, `pyprofile`, `pyvenv`
 - **Networking** — `myip`, `localip`, `killport`, `portwho`, `openports`, `portscan`, `dnscheck`, `certcheck`, `tlscheck`, `ipinfo`, `httpstatus`, `apihit`, `headers`, `flushdns`, `tcpcheck`, `pingcheck`, `weather`, `shorten`, `sshconfig`, `proxy`
 - **Security & Encoding** — `passgen`, `genuuid`, `genssh`, `pubkey`, `b64e`, `b64d`, `urlencode`, `urldecode`, `hashfile`, `jwtdecode`, `dotenv-check`
 - **System & Process** — `mem`, `cpu`, `sysinfo`, `pidtree`, `fkill`, `ports`, `openports`, `now`, `timer`, `diskusage`, `envdiff`
@@ -252,6 +260,17 @@ standard alternative) if it is missing.
 | `goupdate` | `goupdate` | Upgrade all module dependencies to their latest versions |
 | `gomodwhy` | `gomodwhy <module>` | Explain why a module is in the dependency graph |
 | `gobench` | `gobench [pattern]` | Run benchmarks with memory stats (`-benchmem`) |
+| `gorace` | `gorace [./...]` | Run tests with the race detector (`go test -race`) |
+| `gobuild` | `gobuild [output]` | Build a binary from the current module; output defaults to the directory name |
+| `goxbuild` | `goxbuild <GOOS> <GOARCH> [output]` | Cross-compile for any OS/arch (e.g. `goxbuild linux amd64`) |
+| `gocover-func` | `gocover-func` | Coverage breakdown per function (`go tool cover -func`) |
+| `goenv` | `goenv` | Print all Go environment variables (`GOPATH`, `GOROOT`, `GOPROXY`, …) |
+| `golist` | `golist` | List all packages in the current module (`go list ./...`) |
+| `goversion` | `goversion` | Go version plus `GOROOT`, `GOPATH`, `GOMODCACHE`, and `GOPROXY` |
+| `gotest` | `gotest [./...]` | Run `go test -v` with verbose output |
+| `gomod-name` | `gomod-name` | Print the module name declared in `go.mod` |
+| `govscan` | `govscan` | Scan dependencies for known vulnerabilities via `govulncheck` |
+| `goimpl` | `goimpl <TypeName>` | Show `go doc` for a type; hints about `guru implements` if available |
 
 ### 📦 Node / npm
 
@@ -261,14 +280,36 @@ standard alternative) if it is missing.
 | `npmscripts` | `npmscripts` | Pretty-print all scripts defined in `package.json` |
 | `npmoutdated` | `npmoutdated` | Show outdated dependencies with current vs latest versions |
 | `npmsize` | `npmsize` | Print the total size of `node_modules` |
+| `nodeversion` | `nodeversion` | Print Node.js, npm, yarn, and pnpm versions in one shot |
+| `nvmuse` | `nvmuse <version>` | Switch Node.js version via `nvm` or `fnm` (auto-detected) |
+| `tscheck` | `tscheck` | TypeScript type-check without emitting files (`tsc --noEmit`) |
+| `npxrun` | `npxrun <package> [args...]` | Run a package with `npx` |
+| `npmglobal` | `npmglobal` | List globally installed npm packages (top-level only) |
+| `npmlink` | `npmlink [target-dir]` | Link the current package globally or into a target project |
+| `noderepl` | `noderepl` | Open a Node.js REPL with `NODE_PATH` set to the project's `node_modules` |
+| `npmaudit` | `npmaudit` | Run `npm audit` and show a summary |
+| `nodeinfo` | `nodeinfo` | Print name, version, script count, and dependency counts from `package.json` |
+| `npmdedup` | `npmdedup` | Deduplicate the npm dependency tree (`npm dedupe`) |
+| `npmwatch` | `npmwatch [script]` | Watch JS/TS files and re-run an npm script on change (default: `dev`) |
 
 ### 🐍 Python
 
 | Command | Usage | Description |
 |---|---|---|
-| `venvcreate` | `venvcreate` | Create a `.venv` virtual environment in the current directory and activate it |
+| `venvcreate` | `venvcreate` | Create a `venv` virtual environment in the current directory and activate it |
 | `pyclean` | `pyclean` | Recursively remove `__pycache__` directories and `.pyc` files |
 | `pyfreeze` | `pyfreeze` | Run `pip freeze` and write the output to `requirements.txt` |
+| `pipinstall` | `pipinstall` | Run `pip install -r requirements.txt`; does nothing if the file is missing |
+| `pyversion` | `pyversion` | Show Python and pip versions, plus the active virtual environment path |
+| `pycheck` | `pycheck [path]` | Lint with `ruff` → `flake8` → `pyflakes` (first found), then type-check with `mypy` |
+| `pytest-run` | `pytest-run [args...]` | Run `pytest -v`; finds the venv-local pytest if the global one is absent |
+| `pywatch` | `pywatch [test-path]` | Watch `*.py` files and re-run pytest on change (uses `entr` or `watchexec`) |
+| `pydeps` | `pydeps` | List all installed pip packages |
+| `pyupgrade` | `pyupgrade` | Upgrade every package listed in `requirements.txt` to its latest version |
+| `pyrequirements-diff` | `pyrequirements-diff` | Diff `requirements.txt` against the live `pip freeze` output |
+| `pyrun` | `pyrun <script.py> [args...]` | Run a script using the active venv's Python interpreter |
+| `pyprofile` | `pyprofile <script.py> [args...]` | Profile a script with `cProfile` and print the top hotspots |
+| `pyvenv` | `pyvenv` | Create a `.venv` environment and activate it — uses `uv` if available, else `python3 -m venv` |
 
 ### 🌐 Networking & APIs
 

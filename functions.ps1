@@ -784,6 +784,97 @@ function gowatch {
     }
 }
 
+# Run Go tests with the race detector enabled
+# Usage: gorace [./...]
+function gorace {
+    param([string]$Pkg = "./...")
+    go test -race $Pkg
+}
+
+# Build a Go binary; output name defaults to the current directory name
+# Usage: gobuild [output-name]
+function gobuild {
+    param([string]$Out = (Split-Path -Leaf (Get-Location).Path))
+    Write-Host "Building -> $Out"
+    go build -v -o $Out ./...
+}
+
+# Cross-compile a Go binary for a target OS and architecture
+# Usage: goxbuild <GOOS> <GOARCH> [output]
+function goxbuild {
+    param(
+        [Parameter(Mandatory)][string]$Goos,
+        [Parameter(Mandatory)][string]$Goarch,
+        [string]$Out
+    )
+    if (-not $Out) {
+        $base = Split-Path -Leaf (Get-Location).Path
+        $Out = "$base-$Goos-$Goarch"
+        if ($Goos -eq "windows" -and $Out -notmatch '\.exe$') { $Out += ".exe" }
+    }
+    Write-Host "Building $Goos/$Goarch -> $Out"
+    $env:GOOS = $Goos; $env:GOARCH = $Goarch
+    go build -v -o $Out ./...
+    Remove-Item Env:\GOOS -ErrorAction SilentlyContinue
+    Remove-Item Env:\GOARCH -ErrorAction SilentlyContinue
+}
+
+# Run coverage in function-breakdown mode
+# Usage: gocover-func
+function gocover-func {
+    $tmp = Join-Path $env:TEMP "cover-func.out"
+    go test ./... -coverprofile=$tmp
+    go tool cover -func=$tmp
+}
+
+# Show all Go environment variables
+function goenv {
+    go env
+}
+
+# List all packages in the current module
+function golist {
+    go list ./...
+}
+
+# Show the Go version and key paths
+function goversion {
+    go version
+    Write-Host ("  GOROOT     : " + (go env GOROOT))
+    Write-Host ("  GOPATH     : " + (go env GOPATH))
+    Write-Host ("  GOMODCACHE : " + (go env GOMODCACHE))
+    Write-Host ("  GOPROXY    : " + (go env GOPROXY))
+}
+
+# Run go test with verbose flag
+# Usage: gotest [./...]
+function gotest {
+    param([string]$Pkg = "./...")
+    go test -v $Pkg
+}
+
+# Print the module name from go.mod
+function gomod-name {
+    if (-not (Test-Path go.mod)) { Write-Host "No go.mod found."; return }
+    (Get-Content go.mod | Where-Object { $_ -match '^module ' } | Select-Object -First 1) -replace '^module ',''
+}
+
+# Check dependencies for known vulnerabilities via govulncheck
+function govscan {
+    if (-not (Get-Command govulncheck -ErrorAction SilentlyContinue)) {
+        Write-Host "Installing govulncheck..."
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+    }
+    govulncheck ./...
+}
+
+# Show go doc for a type
+# Usage: goimpl <TypeName>
+function goimpl {
+    param([Parameter(Mandatory)][string]$TypeName)
+    go doc $TypeName
+}
+
 #########################################################################
 # 5. NODE / NPM
 #########################################################################
@@ -824,6 +915,112 @@ function npmsize {
     "{0:N2} MB" -f ($size / 1MB)
 }
 
+# Print the current Node.js and npm/yarn/pnpm versions
+function nodeversion {
+    $nv  = if (Get-Command node  -EA SilentlyContinue) { node  --version } else { "not found" }
+    $npv = if (Get-Command npm   -EA SilentlyContinue) { npm   --version } else { "not found" }
+    Write-Host "node  : $nv"
+    Write-Host "npm   : $npv"
+    if (Get-Command yarn -EA SilentlyContinue) { Write-Host "yarn  : $(yarn --version)" }
+    if (Get-Command pnpm -EA SilentlyContinue) { Write-Host "pnpm  : $(pnpm --version)" }
+}
+
+# Switch to a Node.js version via nvm for Windows / fnm
+# Usage: nvmuse <version>
+function nvmuse {
+    param([Parameter(Mandatory)][string]$Version)
+    if (Get-Command nvm -EA SilentlyContinue) {
+        nvm use $Version
+    } elseif (Get-Command fnm -EA SilentlyContinue) {
+        fnm use $Version
+    } else {
+        Write-Host "[!] Neither nvm (nvm-windows) nor fnm found."
+        Write-Host "    Install fnm: winget install Schniz.fnm"
+    }
+}
+
+# Run TypeScript type-check without emitting files
+# Usage: tscheck
+function tscheck {
+    $tsc = $null
+    if (Get-Command tsc -EA SilentlyContinue) { $tsc = "tsc" }
+    elseif (Test-Path "node_modules\.bin\tsc.cmd") { $tsc = "node_modules\.bin\tsc.cmd" }
+    elseif (Test-Path "node_modules\.bin\tsc") { $tsc = "node_modules\.bin\tsc" }
+    if (-not $tsc) { Write-Host "tsc not found. Run: npm install typescript"; return }
+    & $tsc --noEmit
+}
+
+# Run a package with npx
+# Usage: npxrun <package> [args...]
+function npxrun {
+    param([Parameter(Mandatory)][string]$Package)
+    npx $Package @args
+}
+
+# List globally installed npm packages (top-level only)
+function npmglobal {
+    npm list -g --depth=0
+}
+
+# Link the current package globally or into a target project
+# Usage: npmlink [target-dir]
+function npmlink {
+    param([string]$Target)
+    if (-not $Target) {
+        npm link
+        $name = if (Test-Path package.json) { (Get-Content package.json -Raw | ConvertFrom-Json).name } else { Split-Path -Leaf (Get-Location).Path }
+        Write-Host "Linked $name globally."
+    } else {
+        $name = if (Test-Path package.json) { (Get-Content package.json -Raw | ConvertFrom-Json).name } else { Split-Path -Leaf (Get-Location).Path }
+        npm link $name --prefix $Target
+        Write-Host "Linked into $Target"
+    }
+}
+
+# Open an interactive Node.js REPL with the project's node_modules on the path
+function noderepl {
+    $env:NODE_PATH = (Get-Location).Path + "\node_modules"
+    node
+    Remove-Item Env:\NODE_PATH -ErrorAction SilentlyContinue
+}
+
+# Run npm audit
+function npmaudit {
+    npm audit
+}
+
+# Print key info about the current Node project
+function nodeinfo {
+    if (-not (Test-Path package.json)) { Write-Host "No package.json here."; return }
+    $p = Get-Content package.json -Raw | ConvertFrom-Json
+    $scripts  = ($p.scripts.PSObject.Properties | Measure-Object).Count
+    $deps     = if ($p.dependencies)    { ($p.dependencies.PSObject.Properties    | Measure-Object).Count } else { 0 }
+    $devdeps  = if ($p.devDependencies) { ($p.devDependencies.PSObject.Properties | Measure-Object).Count } else { 0 }
+    Write-Host "  Name         : $($p.name ?? '(none)')"
+    Write-Host "  Version      : $($p.version ?? '(none)')"
+    Write-Host "  Scripts      : $scripts"
+    Write-Host "  Dependencies : $deps prod, $devdeps dev"
+}
+
+# Deduplicate the npm dependency tree
+function npmdedup {
+    npm dedupe
+}
+
+# Watch source files and re-run an npm script on change (requires nodemon or watchexec)
+# Usage: npmwatch [script]   defaults to "dev"
+function npmwatch {
+    param([string]$Script = "dev")
+    if (Get-Command nodemon -EA SilentlyContinue) {
+        nodemon --exec "npm run $Script"
+    } elseif (Get-Command watchexec -EA SilentlyContinue) {
+        watchexec --exts js,ts,jsx,tsx -- npm run $Script
+    } else {
+        Write-Host "[!] Install nodemon or watchexec to use npmwatch."
+        Write-Host "    winget install Schniz.fnm  or  scoop install watchexec"
+    }
+}
+
 #########################################################################
 # 6. PYTHON
 #########################################################################
@@ -847,6 +1044,131 @@ function pyfreeze {
     pip freeze | Out-File -Encoding utf8 requirements.txt
     $count = (Get-Content requirements.txt | Measure-Object -Line).Lines
     Write-Host "Wrote $count packages to requirements.txt"
+}
+
+# Show the active Python and pip versions, and whether a venv is active
+# Install packages from requirements.txt; does nothing if the file is missing
+# Usage: pipinstall
+function pipinstall {
+    if (-not (Test-Path requirements.txt)) {
+        Write-Host "No requirements.txt found in the current directory."
+        return
+    }
+    pip install -r requirements.txt
+}
+
+function pyversion {
+    $pv  = if (Get-Command python  -EA SilentlyContinue) { python  --version } else { "not found" }
+    $pip = if (Get-Command pip     -EA SilentlyContinue) { pip     --version } else { "not found" }
+    Write-Host "python : $pv"
+    Write-Host "pip    : $pip"
+    if ($env:VIRTUAL_ENV) { Write-Host "venv   : $env:VIRTUAL_ENV (active)" }
+    else                   { Write-Host "venv   : (none active)" }
+}
+
+# Run ruff (preferred) or flake8 for linting, then mypy for type-checking
+# Usage: pycheck [path]
+function pycheck {
+    param([string]$Target = ".")
+    $found = $false
+    if (Get-Command ruff -EA SilentlyContinue) {
+        Write-Host "==> ruff $Target"
+        ruff check $Target
+        $found = $true
+    } elseif (Get-Command flake8 -EA SilentlyContinue) {
+        Write-Host "==> flake8 $Target"
+        flake8 $Target
+        $found = $true
+    } elseif (Get-Command pyflakes -EA SilentlyContinue) {
+        Write-Host "==> pyflakes $Target"
+        pyflakes $Target
+        $found = $true
+    }
+    if (Get-Command mypy -EA SilentlyContinue) {
+        Write-Host "==> mypy $Target"
+        mypy $Target
+        $found = $true
+    }
+    if (-not $found) { Write-Host "No linter found. Install ruff, flake8, or mypy." }
+}
+
+# Run pytest with verbose output
+# Usage: pytest-run [args...]
+function pytest-run {
+    $pt = $null
+    if (Get-Command pytest -EA SilentlyContinue) { $pt = "pytest" }
+    elseif (Test-Path "venv\Scripts\pytest.exe")  { $pt = "venv\Scripts\pytest.exe" }
+    elseif (Test-Path ".venv\Scripts\pytest.exe") { $pt = ".venv\Scripts\pytest.exe" }
+    if (-not $pt) { Write-Host "pytest not found. Run: pip install pytest"; return }
+    & $pt -v @args
+}
+
+# Watch Python files and re-run pytest on change (requires watchexec)
+# Usage: pywatch [test-path]
+function pywatch {
+    param([string]$TestPath = "tests")
+    if (Get-Command watchexec -EA SilentlyContinue) {
+        watchexec --exts py -- python -m pytest -v $TestPath
+    } else {
+        Write-Host "[!] Install watchexec to use pywatch."
+        Write-Host "    winget install watchexec.watchexec  or  scoop install watchexec"
+    }
+}
+
+# Show all installed pip packages
+function pydeps {
+    pip list
+}
+
+# Upgrade all packages listed in requirements.txt
+function pyupgrade {
+    if (-not (Test-Path requirements.txt)) { Write-Host "No requirements.txt found."; return }
+    pip install --upgrade -r requirements.txt
+}
+
+# Diff the current pip freeze output against requirements.txt
+function pyrequirements-diff {
+    if (-not (Test-Path requirements.txt)) { Write-Host "No requirements.txt found."; return }
+    $frozen  = (pip freeze 2>$null) | Sort-Object
+    $current = (Get-Content requirements.txt) | Sort-Object
+    $diff = Compare-Object $current $frozen
+    if (-not $diff) { Write-Host "No differences found." }
+    else {
+        $diff | ForEach-Object {
+            $sign = if ($_.SideIndicator -eq "=>") { "+" } else { "-" }
+            Write-Host "  $sign $($_.InputObject)"
+        }
+    }
+}
+
+# Run a Python script using the venv interpreter if one is present
+# Usage: pyrun <script.py> [args...]
+function pyrun {
+    param([Parameter(Mandatory)][string]$Script)
+    $py = "python"
+    if ($env:VIRTUAL_ENV) { $py = Join-Path $env:VIRTUAL_ENV "Scripts\python.exe" }
+    elseif (Test-Path "venv\Scripts\python.exe")  { $py = "venv\Scripts\python.exe" }
+    elseif (Test-Path ".venv\Scripts\python.exe") { $py = ".venv\Scripts\python.exe" }
+    & $py $Script @args
+}
+
+# Profile a Python script with cProfile and print the top hotspots
+# Usage: pyprofile <script.py> [args...]
+function pyprofile {
+    param([Parameter(Mandatory)][string]$Script)
+    python -m cProfile -s cumulative $Script @args | Select-Object -First 30
+}
+
+# Create a .venv virtual environment and activate it
+# Prefers uv if available
+function pyvenv {
+    if (Get-Command uv -EA SilentlyContinue) {
+        uv venv .venv
+    } else {
+        python -m venv .venv
+    }
+    . .venv\Scripts\Activate.ps1
+    Write-Host "Virtual environment .venv activated. Run 'deactivate' to exit."
 }
 
 #########################################################################
@@ -1947,13 +2269,46 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "go"; Name = "gobench"; Description = "Run Go benchmarks with memory stats"; Usage = "gobench [pattern]"; Deps = "" }
         [pscustomobject]@{ Category = "go"; Name = "gonew"; Description = "Scaffold a new Go module"; Usage = "gonew <module-path> [dir]"; Deps = "" }
         [pscustomobject]@{ Category = "go"; Name = "gowatch"; Description = "Re-run go tests on file change"; Usage = "gowatch [./...]"; Deps = "watchexec" }
+        [pscustomobject]@{ Category = "go"; Name = "gorace"; Description = "Run Go tests with the race detector"; Usage = "gorace [./...]"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "gobuild"; Description = "Build a Go binary from the current module"; Usage = "gobuild [output]"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "goxbuild"; Description = "Cross-compile a Go binary"; Usage = "goxbuild <GOOS> <GOARCH> [output]"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "gocover-func"; Description = "Coverage breakdown per function"; Usage = "gocover-func"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "goenv"; Description = "Show Go environment variables"; Usage = "goenv"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "golist"; Description = "List all packages in the module"; Usage = "golist"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "goversion"; Description = "Go version and key paths"; Usage = "goversion"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "gotest"; Description = "Run go test -v"; Usage = "gotest [./...]"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "gomod-name"; Description = "Print the module name from go.mod"; Usage = "gomod-name"; Deps = "" }
+        [pscustomobject]@{ Category = "go"; Name = "govscan"; Description = "Scan dependencies for vulnerabilities"; Usage = "govscan"; Deps = "govulncheck" }
+        [pscustomobject]@{ Category = "go"; Name = "goimpl"; Description = "Show go doc for a type"; Usage = "goimpl <TypeName>"; Deps = "" }
         [pscustomobject]@{ Category = "node"; Name = "npmclean"; Description = "Delete node_modules and reinstall (npm/yarn/pnpm)"; Usage = "npmclean"; Deps = "" }
         [pscustomobject]@{ Category = "node"; Name = "npmscripts"; Description = "List package.json scripts"; Usage = "npmscripts"; Deps = "" }
         [pscustomobject]@{ Category = "node"; Name = "npmoutdated"; Description = "Show outdated npm dependencies"; Usage = "npmoutdated"; Deps = "" }
         [pscustomobject]@{ Category = "node"; Name = "npmsize"; Description = "Size of node_modules"; Usage = "npmsize"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "nodeversion"; Description = "Node.js, npm, yarn, and pnpm versions"; Usage = "nodeversion"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "nvmuse"; Description = "Switch Node version via nvm or fnm"; Usage = "nvmuse <version>"; Deps = "nvm,fnm" }
+        [pscustomobject]@{ Category = "node"; Name = "tscheck"; Description = "TypeScript type-check (no emit)"; Usage = "tscheck"; Deps = "tsc" }
+        [pscustomobject]@{ Category = "node"; Name = "npxrun"; Description = "Run a package with npx"; Usage = "npxrun <package> [args...]"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "npmglobal"; Description = "List global npm packages"; Usage = "npmglobal"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "npmlink"; Description = "Link this package globally or into a project"; Usage = "npmlink [target-dir]"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "noderepl"; Description = "Node REPL with project node_modules on path"; Usage = "noderepl"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "npmaudit"; Description = "Run npm audit"; Usage = "npmaudit"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "nodeinfo"; Description = "Summary of the current Node project"; Usage = "nodeinfo"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "npmdedup"; Description = "Deduplicate the npm dependency tree"; Usage = "npmdedup"; Deps = "" }
+        [pscustomobject]@{ Category = "node"; Name = "npmwatch"; Description = "Watch files and re-run an npm script"; Usage = "npmwatch [script]"; Deps = "nodemon,watchexec" }
         [pscustomobject]@{ Category = "python"; Name = "venvcreate"; Description = "Create and activate .\venv"; Usage = "venvcreate"; Deps = "" }
         [pscustomobject]@{ Category = "python"; Name = "pyclean"; Description = "Remove __pycache__ and .pyc files"; Usage = "pyclean"; Deps = "" }
         [pscustomobject]@{ Category = "python"; Name = "pyfreeze"; Description = "Write requirements.txt from pip freeze"; Usage = "pyfreeze"; Deps = "" }
+        [pscustomobject]@{ Category = "python"; Name = "pipinstall"; Description = "pip install -r requirements.txt"; Usage = "pipinstall"; Deps = "" }
+        [pscustomobject]@{ Category = "python"; Name = "pyversion"; Description = "Python/pip versions and active venv"; Usage = "pyversion"; Deps = "" }
+        [pscustomobject]@{ Category = "python"; Name = "pycheck"; Description = "Lint with ruff/flake8 and type-check with mypy"; Usage = "pycheck [path]"; Deps = "ruff,flake8,mypy" }
+        [pscustomobject]@{ Category = "python"; Name = "pytest-run"; Description = "Run pytest -v"; Usage = "pytest-run [args...]"; Deps = "pytest" }
+        [pscustomobject]@{ Category = "python"; Name = "pywatch"; Description = "Watch .py files and re-run pytest"; Usage = "pywatch [test-path]"; Deps = "watchexec" }
+        [pscustomobject]@{ Category = "python"; Name = "pydeps"; Description = "List installed pip packages"; Usage = "pydeps"; Deps = "" }
+        [pscustomobject]@{ Category = "python"; Name = "pyupgrade"; Description = "Upgrade packages from requirements.txt"; Usage = "pyupgrade"; Deps = "" }
+        [pscustomobject]@{ Category = "python"; Name = "pyrequirements-diff"; Description = "Diff pip freeze against requirements.txt"; Usage = "pyrequirements-diff"; Deps = "" }
+        [pscustomobject]@{ Category = "python"; Name = "pyrun"; Description = "Run a script via the active venv python"; Usage = "pyrun <script.py> [args...]"; Deps = "" }
+        [pscustomobject]@{ Category = "python"; Name = "pyprofile"; Description = "Profile a script with cProfile"; Usage = "pyprofile <script.py> [args...]"; Deps = "" }
+        [pscustomobject]@{ Category = "python"; Name = "pyvenv"; Description = "Create .venv and activate (uv if available)"; Usage = "pyvenv"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "myip"; Description = "Public-facing IP address"; Usage = "myip"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "localip"; Description = "Local network IP address"; Usage = "localip"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "killport"; Description = "Kill whatever is listening on a port"; Usage = "killport <port> [port ...]"; Deps = "" }

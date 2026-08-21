@@ -92,11 +92,55 @@ function kubectl {
     }
 }
 
-# --- go / npm / pip: no-op, always succeed ---
-function go  { Write-Host "[mock] go $args" }
-function npm { Write-Host "[mock] npm $args" }
+# --- go: respond to subcommands used by new functions ---
+function go {
+    $sub = $args[0]
+    switch ($sub) {
+        "version" { "go version go1.22.0 windows/amd64" }
+        "env" {
+            switch ($args[1]) {
+                "GOROOT"     { "C:\Go" }
+                "GOPATH"     { "$HOME\go" }
+                "GOMODCACHE" { "$HOME\go\pkg\mod" }
+                "GOPROXY"    { "https://proxy.golang.org" }
+                default      { "GOENV=mock" }
+            }
+        }
+        "list" { "example.com/mockmod" }
+        default { Write-Host "[mock] go $args" }
+    }
+}
+function npm     { Write-Host "[mock] npm $args" }
+function node    {
+    if ($args[0] -eq "--version") { "v20.0.0"; return }
+    if ($args[0] -eq "-e") {
+        $expr = $args[1]
+        if ($expr -like "*p.name*")           { "mock-package"; return }
+        if ($expr -like "*p.version*")        { "1.0.0"; return }
+        if ($expr -like "*scripts*")          { "2"; return }
+        if ($expr -like "*devDependencies*")  { "1"; return }
+        if ($expr -like "*dependencies*")     { "3"; return }
+        "0"; return
+    }
+    Write-Host "[mock] node $args"
+}
+function npx         { Write-Host "[mock] npx $args" }
+function tsc         { Write-Host "[mock] tsc $args" }
+function nodemon     { Write-Host "[mock] nodemon $args" }
+function fnm         { Write-Host "[mock] fnm $args"; return }
+function govulncheck { Write-Host "[mock] govulncheck $args" }
+function ruff        { Write-Host "[mock] ruff $args" }
+function flake8      { Write-Host "[mock] flake8 $args" }
+function mypy        { Write-Host "[mock] mypy $args" }
+function pytest      { Write-Host "[mock] pytest $args" }
 function pip {
-    if ($args -contains "freeze") { "mockpkg==1.0" } else { Write-Host "[mock] pip $args" }
+    $sub = $args[0]
+    switch ($sub) {
+        "freeze"  { "requests==2.28.0" }
+        "list"    { "Package  Version`n------- -------`nrequests 2.28.0" }
+        "install" { Write-Host "[mock] pip install $($args[1..$args.Count] -join ' ')" }
+        default   { Write-Host "[mock] pip $args" }
+    }
 }
 
 # --- python: real enough to make venvcreate/pyclean succeed ---
@@ -323,28 +367,91 @@ Invoke-SharmoryTest "kport"              { kport 8080 mock-pod 80 }
 # 4. GO (go binary fully mocked)
 #########################################################################
 Write-Host "-- Go --"
-Invoke-SharmoryTest "covreport" { covreport }
-Invoke-SharmoryTest "gomodwhy"  { gomodwhy example.com/mockmod }
-Invoke-SharmoryTest "goclean"   { goclean }
-Invoke-SharmoryTest "goupdate"  { goupdate }
-Invoke-SharmoryTest "gobench"   { gobench }
+Invoke-SharmoryTest "covreport"     { covreport }
+Invoke-SharmoryTest "gomodwhy"      { gomodwhy example.com/mockmod }
+Invoke-SharmoryTest "goclean"       { goclean }
+Invoke-SharmoryTest "goupdate"      { goupdate }
+Invoke-SharmoryTest "gobench"       { gobench }
+Invoke-SharmoryTest "gorace"        { gorace }
+Invoke-SharmoryTest "gobuild"       { gobuild }
+Invoke-SharmoryTest "goxbuild"      { goxbuild linux amd64 }
+Invoke-SharmoryTest "goxbuild(win)" { goxbuild windows amd64 }
+Invoke-SharmoryTest "gocover-func"  { gocover-func }
+Invoke-SharmoryTest "goenv"         { goenv }
+Invoke-SharmoryTest "golist"        { golist }
+Invoke-SharmoryTest "goversion"     { goversion }
+Invoke-SharmoryTest "gotest"        { gotest }
+Invoke-SharmoryTest "gomod-name"    {
+    "module example.com/testmod`n`ngo 1.21" | Out-File go.mod -Encoding ascii
+    $name = gomod-name
+    Remove-Item go.mod -ErrorAction SilentlyContinue
+    if ($name -notmatch "example.com") { throw "wrong module name: $name" }
+}
+Invoke-SharmoryTest "govscan"       { govscan }
+Invoke-SharmoryTest "goimpl"        { goimpl fmt.Stringer }
 
 #########################################################################
-# 5. NODE / NPM (npm binary fully mocked)
+# 5. NODE / NPM (npm/node fully mocked)
 #########################################################################
 Write-Host "-- Node/npm --"
-Invoke-SharmoryTest "npmclean"    { npmclean }
-Invoke-SharmoryTest "npmscripts"  { npmscripts }
-Invoke-SharmoryTest "npmoutdated" { npmoutdated }
-Invoke-SharmoryTest "npmsize"     { New-Item -ItemType Directory -Force node_modules | Out-Null; npmsize }
+Invoke-SharmoryTest "npmclean"     { npmclean }
+Invoke-SharmoryTest "npmscripts"   { npmscripts }
+Invoke-SharmoryTest "npmoutdated"  { npmoutdated }
+Invoke-SharmoryTest "npmsize"      { New-Item -ItemType Directory -Force node_modules | Out-Null; npmsize }
+Invoke-SharmoryTest "nodeversion"  { nodeversion }
+Invoke-SharmoryTest "nvmuse"       { try { nvmuse 20 } catch {} }
+Invoke-SharmoryTest "tscheck"      { tscheck }
+Invoke-SharmoryTest "npxrun"       { npxrun cowsay hello }
+Invoke-SharmoryTest "npmglobal"    { npmglobal }
+Invoke-SharmoryTest "npmlink"      { npmlink }
+Invoke-SharmoryTest "noderepl"     { $env:NODE_PATH = ".\node_modules"; Write-Host "[mock] noderepl skipped in test"; Remove-Item Env:\NODE_PATH -ErrorAction SilentlyContinue }
+Invoke-SharmoryTest "npmaudit"     { npmaudit }
+Invoke-SharmoryTest "nodeinfo"     { nodeinfo }
+Invoke-SharmoryTest "npmdedup"     { npmdedup }
+Invoke-SharmoryTest "npmwatch"     { try { npmwatch dev } catch {} }
 
 #########################################################################
 # 6. PYTHON (python/pip fully mocked - no real interpreter required)
 #########################################################################
 Write-Host "-- Python --"
-Invoke-SharmoryTest "venvcreate" { Remove-Item -Recurse -Force venv -ErrorAction SilentlyContinue; venvcreate }
-Invoke-SharmoryTest "pyclean"    { New-Item -ItemType Directory -Force __pycache__ | Out-Null; "x" | Out-File __pycache__\x.pyc; "x" | Out-File dummy.pyc; pyclean }
-Invoke-SharmoryTest "pyfreeze"   { pyfreeze }
+Invoke-SharmoryTest "venvcreate"         { Remove-Item -Recurse -Force venv -ErrorAction SilentlyContinue; venvcreate }
+Invoke-SharmoryTest "pyclean"            { New-Item -ItemType Directory -Force __pycache__ | Out-Null; "x" | Out-File __pycache__\x.pyc; "x" | Out-File dummy.pyc; pyclean }
+Invoke-SharmoryTest "pyfreeze"           { pyfreeze }
+Invoke-SharmoryTest "pipinstall(present)" {
+    "requests==2.28.0" | Out-File requirements.txt -Encoding ascii
+    pipinstall
+}
+Invoke-SharmoryTest "pipinstall(missing)" {
+    Remove-Item requirements.txt -ErrorAction SilentlyContinue
+    $out = pipinstall *>&1 | Out-String
+    if ($out -notmatch "No requirements.txt") { throw "expected missing-file message" }
+}
+Invoke-SharmoryTest "pyversion"          { pyversion }
+Invoke-SharmoryTest "pycheck"            { pycheck . }
+Invoke-SharmoryTest "pytest-run"         { pytest-run }
+Invoke-SharmoryTest "pydeps"             { pydeps }
+Invoke-SharmoryTest "pyupgrade"          {
+    "requests==2.28.0" | Out-File requirements.txt -Encoding ascii
+    pyupgrade
+}
+Invoke-SharmoryTest "pyrequirements-diff" {
+    "requests==2.28.0" | Out-File requirements.txt -Encoding ascii
+    pyrequirements-diff
+}
+Invoke-SharmoryTest "pyrun"              {
+    "print('hello')" | Out-File test_pyrun.py -Encoding ascii
+    $out = pyrun test_pyrun.py *>&1 | Out-String
+    Remove-Item test_pyrun.py -ErrorAction SilentlyContinue
+}
+Invoke-SharmoryTest "pyprofile"          {
+    "print('hi')" | Out-File test_pyprofile.py -Encoding ascii
+    pyprofile test_pyprofile.py *>&1 | Select-Object -First 30 | Out-Null
+    Remove-Item test_pyprofile.py -ErrorAction SilentlyContinue
+}
+Invoke-SharmoryTest "pyvenv"             {
+    Remove-Item -Recurse -Force .venv -ErrorAction SilentlyContinue
+    pyvenv
+}
 
 #########################################################################
 # 7. NETWORKING & APIs (all mocked - nothing leaves the machine)

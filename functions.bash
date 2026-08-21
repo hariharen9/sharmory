@@ -37,8 +37,11 @@ unalias -- \
     k8sctx klogs kexec ktop kevents \
     denv dbuild kns kdesc kport \
     covreport gomodwhy goclean goupdate gobench gonew gowatch \
+    gorace gobuild goxbuild gocover-func goenv golist goversion gotest gomod-name govscan goimpl \
     npmclean npmscripts npmoutdated npmsize \
-    venvcreate pyclean pyfreeze \
+    nodeversion nvmuse tscheck npxrun npmglobal npmlink noderepl npmaudit nodeinfo npmdedup npmwatch \
+    venvcreate pyclean pyfreeze pipinstall \
+    pyversion pycheck pytest-run pywatch pydeps pyupgrade pyrequirements-diff pyrun pyprofile pyvenv \
     myip localip killport portwho certcheck dnscheck httpstatus apihit \
     flushdns weather tcpcheck shorten \
     tlscheck portscan ipinfo \
@@ -963,6 +966,104 @@ gowatch() {
     find . -name '*.go' | entr -c go test ./...
 }
 
+# Run Go tests with the race detector enabled
+# Usage: gorace [./...]
+gorace() {
+    go test -race "${1:-./...}"
+}
+
+# Build a Go binary for the current module; output name defaults to the module base name
+# Usage: gobuild [output-name]
+gobuild() {
+    local out="${1:-$(basename "$(go env GOMODCACHE 2>/dev/null)" 2>/dev/null)}"
+    out="${1:-$(basename "$PWD")}"
+    echo "Building → $out"
+    go build -v -o "$out" ./...
+}
+
+# Cross-compile a Go binary for a target OS and architecture
+# Usage: goxbuild <os> <arch> [output]
+#   e.g. goxbuild linux amd64
+#        goxbuild windows amd64 myapp.exe
+goxbuild() {
+    if [[ -z "$1" || -z "$2" ]]; then
+        echo "Usage: goxbuild <GOOS> <GOARCH> [output]"
+        echo "  Common targets: linux/amd64  darwin/arm64  windows/amd64"
+        return 1
+    fi
+    local goos=$1 goarch=$2
+    local out="${3:-$(basename "$PWD")-${goos}-${goarch}}"
+    [[ "$goos" == "windows" && "$out" != *.exe ]] && out="${out}.exe"
+    echo "Building ${goos}/${goarch} → $out"
+    GOOS="$goos" GOARCH="$goarch" go build -v -o "$out" ./...
+}
+
+# Run coverage in function-breakdown mode (shows % per function, not just overall)
+# Usage: gocover-func
+gocover-func() {
+    go test ./... -coverprofile=/tmp/cover-func.out 2>/dev/null
+    go tool cover -func=/tmp/cover-func.out
+}
+
+# Show all Go environment variables (GOPATH, GOROOT, GOPROXY, etc.)
+goenv() {
+    go env
+}
+
+# List all packages in the current module
+golist() {
+    go list ./...
+}
+
+# Show the Go version and key paths (GOROOT, GOPATH, GOMODCACHE)
+goversion() {
+    go version
+    printf "  GOROOT     : %s\n" "$(go env GOROOT)"
+    printf "  GOPATH     : %s\n" "$(go env GOPATH)"
+    printf "  GOMODCACHE : %s\n" "$(go env GOMODCACHE)"
+    printf "  GOPROXY    : %s\n" "$(go env GOPROXY)"
+}
+
+# Run go test with verbose flag for the given package (default ./...)
+# Usage: gotest [./...]
+gotest() {
+    go test -v "${1:-./...}"
+}
+
+# Print the module name from go.mod in the current directory
+gomod-name() {
+    if [[ ! -f go.mod ]]; then
+        echo "No go.mod found in the current directory."
+        return 1
+    fi
+    awk '/^module /{print $2; exit}' go.mod
+}
+
+# Check if any direct dependencies have known vulnerabilities (requires govulncheck)
+# Usage: govscan
+govscan() {
+    if ! command -v govulncheck &>/dev/null; then
+        echo "Installing govulncheck…"
+        go install golang.org/x/vuln/cmd/govulncheck@latest || return 1
+    fi
+    govulncheck ./...
+}
+
+# Show all interfaces implemented by types in the current package (requires guru)
+# Falls back to plain go doc when guru is not available
+# Usage: goimpl <type>
+goimpl() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: goimpl <TypeName>"
+        return 1
+    fi
+    if command -v guru &>/dev/null; then
+        echo "Use guru manually: guru implements <position>"
+    else
+        go doc "$1"
+    fi
+}
+
 #########################################################################
 # 5. NODE / NPM
 #########################################################################
@@ -1001,6 +1102,124 @@ npmsize() {
     du -sh node_modules 2>/dev/null
 }
 
+# Print the current Node.js and npm/yarn/pnpm versions
+nodeversion() {
+    printf "node  : %s\n" "$(node --version 2>/dev/null || echo 'not found')"
+    printf "npm   : %s\n" "$(npm --version  2>/dev/null || echo 'not found')"
+    command -v yarn  &>/dev/null && printf "yarn  : %s\n" "$(yarn --version)"
+    command -v pnpm  &>/dev/null && printf "pnpm  : %s\n" "$(pnpm --version)"
+}
+
+# Switch to a Node.js version via nvm (if installed)
+# Usage: nvmuse <version>  e.g. nvmuse 20  or nvmuse lts/iron
+nvmuse() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: nvmuse <version>  e.g. nvmuse 20  or nvmuse lts/iron"
+        return 1
+    fi
+    if command -v nvm &>/dev/null 2>&1 || [[ -s "$NVM_DIR/nvm.sh" ]]; then
+        # source nvm if it hasn't been loaded into the current shell yet
+        [[ -s "$NVM_DIR/nvm.sh" ]] && source "$NVM_DIR/nvm.sh"
+        nvm use "$1"
+    elif command -v fnm &>/dev/null; then
+        fnm use "$1"
+    else
+        echo "Neither nvm nor fnm found. Install one to manage Node versions."
+        return 1
+    fi
+}
+
+# Run TypeScript type-check without emitting files (requires tsc in PATH or node_modules)
+# Usage: tscheck
+tscheck() {
+    local tsc_bin
+    if command -v tsc &>/dev/null; then
+        tsc_bin="tsc"
+    elif [[ -x node_modules/.bin/tsc ]]; then
+        tsc_bin="node_modules/.bin/tsc"
+    else
+        echo "TypeScript compiler (tsc) not found. Run: npm install typescript"
+        return 1
+    fi
+    "$tsc_bin" --noEmit
+}
+
+# Run a package with npx, prompting to install if not cached
+# Usage: npxrun <package> [args...]
+npxrun() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: npxrun <package> [args...]"
+        return 1
+    fi
+    npx "$@"
+}
+
+# List globally installed npm packages (top-level only)
+npmglobal() {
+    npm list -g --depth=0
+}
+
+# Link the current package globally, then link it into another project
+# Usage: npmlink [target-project-dir]
+npmlink() {
+    if [[ -z "$1" ]]; then
+        npm link
+        echo "Linked $(jq -r .name package.json 2>/dev/null || basename "$PWD") globally."
+    else
+        npm link "$(jq -r .name package.json 2>/dev/null || basename "$PWD")" --prefix "$1"
+        echo "Linked into $1"
+    fi
+}
+
+# Open an interactive Node.js REPL with the project's node_modules on the path
+noderepl() {
+    NODE_PATH="$(pwd)/node_modules" node
+}
+
+# Run npm audit and show a short summary
+npmaudit() {
+    npm audit 2>/dev/null || true
+}
+
+# Print key info about the current Node project (name, version, scripts count, deps count)
+nodeinfo() {
+    if [[ ! -f package.json ]]; then
+        echo "No package.json in the current directory."
+        return 1
+    fi
+    local name version scripts_count deps_count devdeps_count
+    name=$(node -e "const p=require('./package.json');console.log(p.name||'(none)')" 2>/dev/null)
+    version=$(node -e "const p=require('./package.json');console.log(p.version||'(none)')" 2>/dev/null)
+    scripts_count=$(node -e "const p=require('./package.json');console.log(Object.keys(p.scripts||{}).length)" 2>/dev/null)
+    deps_count=$(node -e "const p=require('./package.json');console.log(Object.keys(p.dependencies||{}).length)" 2>/dev/null)
+    devdeps_count=$(node -e "const p=require('./package.json');console.log(Object.keys(p.devDependencies||{}).length)" 2>/dev/null)
+    printf "  Name         : %s\n" "$name"
+    printf "  Version      : %s\n" "$version"
+    printf "  Scripts      : %s\n" "$scripts_count"
+    printf "  Dependencies : %s prod, %s dev\n" "$deps_count" "$devdeps_count"
+}
+
+# Deduplicate and flatten the npm dependency tree
+npmdedup() {
+    npm dedupe
+}
+
+# Watch source files and re-run a npm script on change (requires nodemon or entr)
+# Usage: npmwatch [script]   defaults to "dev"
+npmwatch() {
+    local script="${1:-dev}"
+    if command -v nodemon &>/dev/null; then
+        nodemon --exec "npm run $script"
+    elif command -v entr &>/dev/null; then
+        find . -name '*.js' -o -name '*.ts' -o -name '*.jsx' -o -name '*.tsx' \
+            | grep -v node_modules \
+            | entr -c npm run "$script"
+    else
+        echo "Install nodemon or entr to use npmwatch."
+        return 1
+    fi
+}
+
 #########################################################################
 # 6. PYTHON
 #########################################################################
@@ -1022,6 +1241,154 @@ pyclean() {
 pyfreeze() {
     pip freeze > requirements.txt
     echo "Wrote $(wc -l < requirements.txt) packages to requirements.txt"
+}
+
+# Show the active Python and pip versions, and whether a venv is active
+# Install packages from requirements.txt; does nothing if the file is missing
+# Usage: pipinstall
+pipinstall() {
+    if [[ ! -f requirements.txt ]]; then
+        echo "No requirements.txt found in the current directory."
+        return 1
+    fi
+    pip install -r requirements.txt
+}
+
+pyversion() {
+    printf "python : %s\n" "$(python3 --version 2>/dev/null || echo 'not found')"
+    printf "pip    : %s\n" "$(pip3 --version 2>/dev/null || echo 'not found')"
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        printf "venv   : %s (active)\n" "$VIRTUAL_ENV"
+    else
+        printf "venv   : (none active)\n"
+    fi
+}
+
+# Run ruff (preferred) or flake8/pyflakes for linting, then mypy for type-checking
+# Falls back gracefully if tools are missing
+# Usage: pycheck [path]
+pycheck() {
+    local target="${1:-.}"
+    local found=0
+    if command -v ruff &>/dev/null; then
+        echo "==> ruff $target"
+        ruff check "$target"
+        found=1
+    elif command -v flake8 &>/dev/null; then
+        echo "==> flake8 $target"
+        flake8 "$target"
+        found=1
+    elif command -v pyflakes &>/dev/null; then
+        echo "==> pyflakes $target"
+        pyflakes "$target"
+        found=1
+    fi
+    if command -v mypy &>/dev/null; then
+        echo "==> mypy $target"
+        mypy "$target"
+        found=1
+    fi
+    if [[ $found -eq 0 ]]; then
+        echo "No linter found. Install ruff, flake8, or mypy."
+        return 1
+    fi
+}
+
+# Run pytest with verbose output; pass extra args to pytest
+# Usage: pytest-run [args...]
+pytest-run() {
+    if command -v pytest &>/dev/null; then
+        pytest -v "$@"
+    elif [[ -x venv/bin/pytest ]]; then
+        venv/bin/pytest -v "$@"
+    elif [[ -x .venv/bin/pytest ]]; then
+        .venv/bin/pytest -v "$@"
+    else
+        echo "pytest not found. Install it: pip install pytest"
+        return 1
+    fi
+}
+
+# Watch Python files and re-run pytest on change (requires entr or watchexec)
+# Usage: pywatch [test-path]
+pywatch() {
+    local target="${1:-tests}"
+    if command -v entr &>/dev/null; then
+        find . -name '*.py' -not -path '*/.git*' -not -path '*/\.*' 2>/dev/null \
+            | entr -c python3 -m pytest -v "$target"
+    elif command -v watchexec &>/dev/null; then
+        watchexec --exts py -- python3 -m pytest -v "$target"
+    else
+        echo "Install entr or watchexec to use pywatch."
+        return 1
+    fi
+}
+
+# Show all installed packages and their sizes, sorted largest first
+# Usage: pydeps
+pydeps() {
+    pip list --format=columns 2>/dev/null || pip list
+}
+
+# Upgrade all packages listed in requirements.txt to their latest versions
+# Usage: pyupgrade
+pyupgrade() {
+    if [[ ! -f requirements.txt ]]; then
+        echo "No requirements.txt found."
+        return 1
+    fi
+    pip install --upgrade -r requirements.txt
+}
+
+# Diff the current pip freeze output against the committed requirements.txt
+# Usage: pyrequirements-diff
+pyrequirements-diff() {
+    if [[ ! -f requirements.txt ]]; then
+        echo "No requirements.txt found."
+        return 1
+    fi
+    diff <(sort requirements.txt) <(pip freeze 2>/dev/null | sort)
+}
+
+# Run a Python script using the venv interpreter if one is active or present
+# Usage: pyrun <script.py> [args...]
+pyrun() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: pyrun <script.py> [args...]"
+        return 1
+    fi
+    local py="python3"
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        py="$VIRTUAL_ENV/bin/python"
+    elif [[ -x venv/bin/python ]]; then
+        py="venv/bin/python"
+    elif [[ -x .venv/bin/python ]]; then
+        py=".venv/bin/python"
+    fi
+    "$py" "$@"
+}
+
+# Profile a Python script with cProfile and print the top 20 hotspots
+# Usage: pyprofile <script.py> [args...]
+pyprofile() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: pyprofile <script.py> [args...]"
+        return 1
+    fi
+    python3 -m cProfile -s cumulative "$@" | head -30
+}
+
+# Create a .venv virtual environment (PEP 668 / modern convention) and activate it
+# Prefers uv if available for speed
+# Usage: pyvenv
+pyvenv() {
+    if command -v uv &>/dev/null; then
+        uv venv .venv
+    else
+        python3 -m venv .venv
+    fi
+    source .venv/bin/activate
+    echo "Virtual environment .venv activated. Run 'deactivate' to exit."
 }
 
 #########################################################################
@@ -2252,13 +2619,46 @@ _SHARMORY_REGISTRY=(
     'go^gobench^Run Go benchmarks with memory stats^gobench [pattern]^'
     'go^gonew^Scaffold a minimal Go module^gonew <module-path>^'
     'go^gowatch^Re-run Go tests on save^gowatch^entr'
+    'go^gorace^Run Go tests with the race detector^gorace [./...]^'
+    'go^gobuild^Build a Go binary from the current module^gobuild [output]^'
+    'go^goxbuild^Cross-compile a Go binary^goxbuild <GOOS> <GOARCH> [output]^'
+    'go^gocover-func^Coverage breakdown per function^gocover-func^'
+    'go^goenv^Show Go environment variables^goenv^'
+    'go^golist^List all packages in the module^golist^'
+    'go^goversion^Go version and key paths^goversion^'
+    'go^gotest^Run go test -v^gotest [./...]^'
+    'go^gomod-name^Print the module name from go.mod^gomod-name^'
+    'go^govscan^Scan dependencies for vulnerabilities^govscan^govulncheck'
+    'go^goimpl^Show go doc (or guru implements) for a type^goimpl <TypeName>^'
     'node^npmclean^Delete node_modules and reinstall^npmclean^'
     'node^npmscripts^List package.json scripts^npmscripts^jq'
     'node^npmoutdated^Show outdated npm dependencies^npmoutdated^'
     'node^npmsize^Size of node_modules^npmsize^'
+    'node^nodeversion^Node.js, npm, yarn, and pnpm versions^nodeversion^'
+    'node^nvmuse^Switch Node version via nvm or fnm^nvmuse <version>^nvm,fnm'
+    'node^tscheck^TypeScript type-check (no emit)^tscheck^tsc'
+    'node^npxrun^Run a package with npx^npxrun <package> [args...]^'
+    'node^npmglobal^List global npm packages^npmglobal^'
+    'node^npmlink^Link this package globally or into a project^npmlink [target-dir]^'
+    'node^noderepl^Node REPL with project node_modules on path^noderepl^'
+    'node^npmaudit^Run npm audit^npmaudit^'
+    'node^nodeinfo^Summary of the current Node project^nodeinfo^'
+    'node^npmdedup^Deduplicate the npm dependency tree^npmdedup^'
+    'node^npmwatch^Watch files and re-run an npm script^npmwatch [script]^nodemon,entr'
     'python^venvcreate^Create and activate ./venv^venvcreate^'
     'python^pyclean^Remove __pycache__ and .pyc files^pyclean^'
     'python^pyfreeze^Write requirements.txt from pip freeze^pyfreeze^'
+    'python^pipinstall^pip install -r requirements.txt^pipinstall^'
+    'python^pyversion^Python/pip versions and active venv^pyversion^'
+    'python^pycheck^Lint with ruff/flake8 and type-check with mypy^pycheck [path]^ruff,flake8,mypy'
+    'python^pytest-run^Run pytest -v^pytest-run [args...]^pytest'
+    'python^pywatch^Watch .py files and re-run pytest^pywatch [test-path]^entr,watchexec'
+    'python^pydeps^List installed pip packages^pydeps^'
+    'python^pyupgrade^Upgrade packages from requirements.txt^pyupgrade^'
+    'python^pyrequirements-diff^Diff pip freeze against requirements.txt^pyrequirements-diff^'
+    'python^pyrun^Run a script via the active venv python^pyrun <script.py> [args...]^'
+    'python^pyprofile^Profile a script with cProfile^pyprofile <script.py> [args...]^'
+    'python^pyvenv^Create .venv and activate (uv if available)^pyvenv^'
     'net^myip^Public-facing IP address^myip^'
     'net^localip^Local network IP address^localip^'
     'net^killport^Kill whatever is listening on a port^killport <port> [port ...]^'
