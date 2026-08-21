@@ -4,7 +4,7 @@
 class Sharmory < Formula
   desc "Single-file Zsh, Bash, and PowerShell library of developer shell functions"
   homepage "https://github.com/hariharen9/sharmory"
-  url "https://github.com/hariharen9/sharmory/archive/refs/tags/v0.2.0.tar.gz"
+  url "https://github.com/hariharen9/sharmory/archive/refs/tags/v1.0.0.tar.gz"
   sha256 "30061088d9b093e78b7a32b48ea0dc1c55c3348a838e2bc36e7eb5c0e88fb8fc"
   license "MIT"
   head "https://github.com/hariharen9/sharmory.git", branch: "main"

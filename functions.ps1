@@ -13,7 +13,7 @@
 #########################################################################
 
 # Current version — bump this on every release
-$script:SharmoryVersion = "0.2.0"
+$script:SharmoryVersion = "1.0.0"
 
 if ($MyInvocation.MyCommand.Path) {
     $script:SharmoryFile = $MyInvocation.MyCommand.Path
