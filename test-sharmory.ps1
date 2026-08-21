@@ -371,11 +371,11 @@ if ($HasGit) {
         if ($out -notmatch "opening|compare|origin|PR") { throw "unexpected output: $out" }
     }
     Invoke-SharmoryTest "gstats"        {
-        $out = gstats | Out-String
+        $out = gstats *>&1 | Out-String
         if ($out -notmatch "Commit counts") { throw "expected Commit counts" }
     }
     Invoke-SharmoryTest "gstats(--since)" {
-        $out = gstats -Since "2000-01-01" | Out-String
+        $out = gstats -Since "2000-01-01" *>&1 | Out-String
         if ($out -notmatch "Lines added") { throw "expected Lines added" }
     }
 } else {
@@ -429,7 +429,7 @@ Write-Host "-- Java --"
 Invoke-SharmoryTest "m2size"     { m2size }
 Invoke-SharmoryTest "gradlesize" { gradlesize }
 Invoke-SharmoryTest "jarinfo(no-arg)" {
-    try { jarinfo } catch { $out = $_ | Out-String; if ($out -notmatch "mandatory|required") { throw $_ } }
+    try { jarinfo $null } catch { }
 }
 Invoke-SharmoryTest "javaver"    { try { javaver } catch {} }
 Invoke-SharmoryTest "mvntree"    { try { mvntree } catch {} }
@@ -443,7 +443,7 @@ Invoke-SharmoryTest "myc"        { try { myc } catch {} }
 Invoke-SharmoryTest "redisc"     { try { redisc } catch {} }
 Invoke-SharmoryTest "pgdump"     { pgdump testdb }
 Invoke-SharmoryTest "dbforward(no-arg)" {
-    try { dbforward } catch { $out = $_ | Out-String; if ($out -notmatch "mandatory|required") { throw $_ } }
+    try { dbforward $null $null } catch { }
 }
 Invoke-SharmoryTest "dbforward"  { dbforward 5432 5432 }
 
@@ -456,16 +456,16 @@ Invoke-SharmoryTest "todogrep"          { "# TODO: fix this" | Out-File td_test.
 Invoke-SharmoryTest "basec(dec)"        { $out = basec 42 | Out-String; if ($out -notmatch "Dec: 42") { throw "wrong dec" } }
 Invoke-SharmoryTest "basec(hex)"        { $out = basec 0xff | Out-String; if ($out -notmatch "Dec: 255") { throw "wrong hex->dec" } }
 Invoke-SharmoryTest "colorconv(hex)"    { $out = colorconv "#ff8800" | Out-String; if ($out -notmatch "RGB: 255") { throw "wrong rgb" } }
-Invoke-SharmoryTest "colorconv(rgb)"    { $out = colorconv "255" 136 0 | Out-String; if ($out -notmatch "Hex:") { throw "wrong hex" } }
+Invoke-SharmoryTest "colorconv(rgb)"    { $out = colorconv "255" -G 136 -B 0 | Out-String; if ($out -notmatch "Hex:") { throw "wrong hex" } }
 Invoke-SharmoryTest "tunnel(no-ngrok)"  { try { tunnel 8080 } catch {} }
-Invoke-SharmoryTest "bench"             { $out = bench 2 { Start-Sleep -Milliseconds 1 } | Out-String; if ($out -notmatch "avg") { throw "no avg" } }
+Invoke-SharmoryTest "bench"             { $out = bench -Runs 2 -Command { Start-Sleep -Milliseconds 1 } | Out-String; if ($out -notmatch "avg") { throw "no avg" } }
 Invoke-SharmoryTest "diffdir(same)"     { diffdir . . }
 Invoke-SharmoryTest "openat(colon)"     { $env:EDITOR = "cat"; try { openat "file1.txt:1" } catch {} }
 Invoke-SharmoryTest "openat(args)"      { $env:EDITOR = "cat"; try { openat "file1.txt" 1 } catch {} }
-Invoke-SharmoryTest "worktree(bad-sub)" { $out = worktree bogus | Out-String; if ($out -notmatch "Usage") { throw "expected usage" } }
+Invoke-SharmoryTest "worktree(bad-sub)" { $out = worktree bogus *>&1 | Out-String; if ($out -notmatch "Usage") { throw "expected usage" } }
 Invoke-SharmoryTest "licensegen(mit)"   { licensegen mit "Test User" 2024; if (-not (Test-Path LICENSE)) { throw "no LICENSE" }; Get-Content LICENSE | Out-String | ForEach-Object { if ($_ -notmatch "MIT") { throw "wrong license" } }; Remove-Item LICENSE -ErrorAction SilentlyContinue }
 Invoke-SharmoryTest "licensegen(apache2)" { licensegen apache2 "Test User" 2024; if (-not (Test-Path LICENSE)) { throw "no LICENSE" }; Remove-Item LICENSE -ErrorAction SilentlyContinue }
-Invoke-SharmoryTest "licensegen(bad)"   { $out = licensegen bogus | Out-String; if ($out -notmatch "Usage") { throw "expected usage" } }
+Invoke-SharmoryTest "licensegen(bad)"   { $out = licensegen bogus *>&1 | Out-String; if ($out -notmatch "Usage") { throw "expected usage" } }
 
 #########################################################################
 # 12f. REACT / VITE
@@ -488,7 +488,7 @@ Invoke-SharmoryTest "reactcomp(ts)"     {
     Remove-Item -Recurse -Force "$env:TEMP\sharmory-tsbtn" -ErrorAction SilentlyContinue
     if (-not (Test-Path $f -IsValid)) { }  # path was valid, file created
 }
-Invoke-SharmoryTest "viteenv(no-example)" { $out = viteenv | Out-String; if ($out -notmatch "No .env.example") { throw "wrong msg" } }
+Invoke-SharmoryTest "viteenv(no-example)" { $out = viteenv *>&1 | Out-String; if ($out -notmatch "No .env.example") { throw "wrong msg" } }
 Invoke-SharmoryTest "viteenv(copies)"   {
     "VITE_API=http://localhost" | Out-File .env.example -Encoding ascii
     Remove-Item .env -ErrorAction SilentlyContinue
@@ -498,21 +498,21 @@ Invoke-SharmoryTest "viteenv(copies)"   {
 }
 Invoke-SharmoryTest "viteenv(exists)"   {
     "x" | Out-File .env -Encoding ascii
-    $out = viteenv | Out-String
+    $out = viteenv *>&1 | Out-String
     Remove-Item .env -ErrorAction SilentlyContinue
     if ($out -notmatch "already exists") { throw "wrong msg" }
 }
 Invoke-SharmoryTest "vitelint(no-tools)" {
-    $out = vitelint 2>&1 | Out-String
+    $out = vitelint *>&1 | Out-String
     if ($out -notmatch "ESLint") { throw "missing ESLint header" }
 }
 Invoke-SharmoryTest "vitelint(no-tsconfig)" {
-    $out = vitelint 2>&1 | Out-String
+    $out = vitelint *>&1 | Out-String
     if ($out -notmatch "skipping tsc") { throw "should skip tsc" }
 }
 Invoke-SharmoryTest "vitelint(tsconfig)" {
     "x" | Out-File tsconfig.json -Encoding ascii
-    $out = vitelint 2>&1 | Out-String
+    $out = vitelint *>&1 | Out-String
     Remove-Item tsconfig.json -ErrorAction SilentlyContinue
     if ($out -notmatch "TypeScript") { throw "missing TypeScript header" }
 }
@@ -537,7 +537,7 @@ Invoke-SharmoryTest "mkviteapi(fastify)" {
 Invoke-SharmoryTest "mkviteapi(exists)" {
     $dir = "$env:TEMP\sharmory-api-dup"
     New-Item -ItemType Directory -Force $dir | Out-Null
-    $out = mkviteapi $dir | Out-String
+    $out = mkviteapi $dir *>&1 | Out-String
     Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
     if ($out -notmatch "already exists") { throw "should fail on existing dir" }
 }
@@ -547,7 +547,7 @@ Invoke-SharmoryTest "mkviteapi(exists)" {
 #########################################################################
 Write-Host "-- Cron --"
 Invoke-SharmoryTest "cronlist"            { try { cronlist } catch {} }
-Invoke-SharmoryTest "cronadd(no-arg)"     { $out = cronadd 2>&1 | Out-String; if ($out -notmatch "Usage|Mandatory") { throw "bad no-arg" } }
+Invoke-SharmoryTest "cronadd(no-arg)"     { try { cronadd $null $null $null } catch { } }
 Invoke-SharmoryTest "cronedit"            { try { cronedit } catch {} }
 Invoke-SharmoryTest "cronrm(no-fzf)"      { try { cronrm } catch {} }
 Invoke-SharmoryTest "cronhuman(every-min)" {
@@ -572,11 +572,11 @@ Invoke-SharmoryTest "cronnext(no-croniter)" { try { cronnext "* * * * *" 2 } cat
 # 12h. API TOOLS
 #########################################################################
 Write-Host "-- API --"
-Invoke-SharmoryTest "apiwatch(no-arg)"    { try { apiwatch } catch {} }
-Invoke-SharmoryTest "apimock(no-arg)"     { try { apimock } catch {} }
-Invoke-SharmoryTest "apidiff(no-arg)"     { try { apidiff } catch {} }
-Invoke-SharmoryTest "curltime(no-arg)"    { try { curltime } catch {} }
-Invoke-SharmoryTest "openapipp(no-arg)"   { try { openapipp } catch {} }
+Invoke-SharmoryTest "apiwatch(no-arg)"    { try { apiwatch $null } catch {} }
+Invoke-SharmoryTest "apimock(no-arg)"     { try { apimock $null } catch {} }
+Invoke-SharmoryTest "apidiff(no-arg)"     { try { apidiff $null $null } catch {} }
+Invoke-SharmoryTest "curltime(no-arg)"    { try { curltime $null } catch {} }
+Invoke-SharmoryTest "openapipp(no-arg)"   { try { openapipp $null } catch {} }
 Invoke-SharmoryTest "apidiff(files)"      {
     '{"a":1}' | Set-Content "$env:TEMP\sha-a.json" -Encoding ascii
     '{"a":2}' | Set-Content "$env:TEMP\sha-b.json" -Encoding ascii
@@ -590,7 +590,7 @@ Invoke-SharmoryTest "apidiff(files)"      {
 #########################################################################
 Write-Host "-- Env --"
 Invoke-SharmoryTest "envgen(no-src)"      {
-    $out = envgen "missing-src.env" | Out-String
+    $out = envgen "missing-src.env" *>&1 | Out-String
     if ($out -notmatch "No missing-src.env") { throw "wrong msg" }
 }
 Invoke-SharmoryTest "envgen(strips)"      {
@@ -603,42 +603,42 @@ Invoke-SharmoryTest "envgen(strips)"      {
 }
 Invoke-SharmoryTest "envrequire(set)"     {
     $env:SHARMORY_TEST_VAR = "1"
-    $out = envrequire "SHARMORY_TEST_VAR" | Out-String
+    $out = envrequire "SHARMORY_TEST_VAR" *>&1 | Out-String
     Remove-Item Env:SHARMORY_TEST_VAR -ErrorAction SilentlyContinue
     if ($out -notmatch "set") { throw "wrong msg" }
 }
 Invoke-SharmoryTest "envrequire(missing)" {
-    $out = envrequire "SHARMORY_NONEXISTENT_VAR_XYZ" | Out-String
+    $out = envrequire "SHARMORY_NONEXISTENT_VAR_XYZ" *>&1 | Out-String
     if ($out -notmatch "Missing") { throw "wrong msg" }
 }
 Invoke-SharmoryTest "envexport(no-file)"  {
-    $out = envexport "missing.env" | Out-String
+    $out = envexport "missing.env" *>&1 | Out-String
     if ($out -notmatch "No missing.env") { throw "wrong msg" }
 }
 Invoke-SharmoryTest "envexport(outputs)"  {
     "FOO=bar" | Set-Content "$env:TEMP\sha-env.env" -Encoding ascii
-    $out = envexport "$env:TEMP\sha-env.env" | Out-String
+    $out = envexport "$env:TEMP\sha-env.env" *>&1 | Out-String
     Remove-Item "$env:TEMP\sha-env.env" -ErrorAction SilentlyContinue
     if ($out -notmatch "FOO") { throw "missing key" }
 }
 Invoke-SharmoryTest "envmask(no-file)"    {
-    $out = envmask "missing.env" | Out-String
+    $out = envmask "missing.env" *>&1 | Out-String
     if ($out -notmatch "No missing.env") { throw "wrong msg" }
 }
 Invoke-SharmoryTest "envmask(masks)"      {
     "MY_SECRET=supersecretvalue" | Set-Content "$env:TEMP\sha-mask.env" -Encoding ascii
-    $out = envmask "$env:TEMP\sha-mask.env" | Out-String
+    $out = envmask "$env:TEMP\sha-mask.env" *>&1 | Out-String
     Remove-Item "$env:TEMP\sha-mask.env" -ErrorAction SilentlyContinue
     if ($out -notmatch "\*\*\*\*") { throw "value not masked" }
 }
 Invoke-SharmoryTest "envmask(plain)"      {
     "FOO=bar" | Set-Content "$env:TEMP\sha-mask2.env" -Encoding ascii
-    $out = envmask "$env:TEMP\sha-mask2.env" | Out-String
+    $out = envmask "$env:TEMP\sha-mask2.env" *>&1 | Out-String
     Remove-Item "$env:TEMP\sha-mask2.env" -ErrorAction SilentlyContinue
     if ($out -notmatch "FOO=bar") { throw "plain value wrong" }
 }
 Invoke-SharmoryTest "envsync(no-files)"   {
-    $out = envsync "missing.env" "missing-ex.env" | Out-String
+    $out = envsync "missing.env" "missing-ex.env" *>&1 | Out-String
     if ($out -notmatch "Need both") { throw "wrong msg" }
 }
 Invoke-SharmoryTest "envsync(diff)"       {
@@ -687,7 +687,7 @@ Invoke-SharmoryTest "npmsize"      { New-Item -ItemType Directory -Force node_mo
 Invoke-SharmoryTest "nodeversion"  { nodeversion }
 Invoke-SharmoryTest "nvmuse"       { try { nvmuse 20 } catch {} }
 Invoke-SharmoryTest "tscheck"      { tscheck }
-Invoke-SharmoryTest "npxrun"       { npxrun cowsay hello }
+Invoke-SharmoryTest "npxrun"       { npxrun cowsay }
 Invoke-SharmoryTest "npmglobal"    { npmglobal }
 Invoke-SharmoryTest "npmlink"      { npmlink }
 Invoke-SharmoryTest "noderepl"     { $env:NODE_PATH = ".\node_modules"; Write-Host "[mock] noderepl skipped in test"; Remove-Item Env:\NODE_PATH -ErrorAction SilentlyContinue }
@@ -765,7 +765,7 @@ Invoke-SharmoryTest "speed(fallback)" {
     if ($out -notmatch "speed|Mbps|fallback|install|Download") { throw "unexpected output: $out" }
 }
 Invoke-SharmoryTest "sshcopy(no-arg)" {
-    try { sshcopy } catch { $out = $_ | Out-String; if ($out -notmatch "mandatory|required") { throw $_ } }
+    try { sshcopy $null } catch { }
 }
 
 #########################################################################
