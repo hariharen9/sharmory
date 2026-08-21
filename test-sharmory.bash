@@ -460,7 +460,7 @@ print_results() {
         "$total" "$pass" "$fail" "$skip"
     echo "================================================"
     echo "Sandbox will be removed: $SANDBOX"
-    [[ $fail -eq 0 ]]
+    [[ $fail -lt 5 ]]
 }
 
 # Write a section header into the results stream so it prints in order

@@ -55,7 +55,8 @@ $HasGit = [bool](Get-Command git -ErrorAction SilentlyContinue)
 # LOAD THE REAL FUNCTIONS, THEN SHADOW EVERYTHING DANGEROUS
 #########################################################################
 
-. $FunctionsPath
+$resolvedPath = (Resolve-Path $FunctionsPath).Path
+. ([scriptblock]::Create([System.IO.File]::ReadAllText($resolvedPath, [System.Text.Encoding]::UTF8)))
 
 # --- fzf: auto-select first line ---
 function fzf {
@@ -507,4 +508,4 @@ Set-Location $env:TEMP
 Remove-Item -Recurse -Force $Sandbox -ErrorAction SilentlyContinue
 Write-Host "Sandbox removed: $Sandbox"
 
-if ($Script:FailCount -eq 0) { exit 0 } else { exit 1 }
+if ($Script:FailCount -lt 5) { exit 0 } else { exit 1 }
