@@ -92,6 +92,12 @@ case "$*" in
     inspect\ --format*)     printf "MOCK_VAR=hello\nOTHER_VAR=world\n" ;;
     build*)                 echo "Successfully built mockimage123" ;;
     info*)                  echo "Client: Docker Engine - Community (mock)" ;;
+    stats*)                 printf "NAME\tCPU%%\tMEM\tNET\nmockcontainer\t0.1%%\t10MiB / 2GiB\t0B / 0B\n" ;;
+    compose\ up*)           echo "[mock] docker compose up" ;;
+    compose\ down*)         echo "[mock] docker compose down" ;;
+    system\ df*)            printf "mockvolume\t10MB\n" ;;
+    volume\ ls*)            echo "mockvolume" ;;
+    volume\ inspect*)       echo "/var/lib/docker/volumes/mockvolume/_data" ;;
     *) : ;;
 esac
 exit 0
@@ -109,6 +115,15 @@ case "$*" in
     get\ events*)                   echo "LAST SEEN   TYPE   REASON   OBJECT" ;;
     describe\ pod*)                 printf "Name: mock-pod\nNamespace: default\n" ;;
     port-forward*)                  echo "Forwarding from 127.0.0.1:8080 -> 80" ;;
+    get\ deployments*)              echo "deployment.apps/mock-deploy" ;;
+    rollout\ restart*)              echo "deployment.apps/mock-deploy restarted" ;;
+    rollout\ status*)               echo "deployment \"mock-deploy\" successfully rolled out" ;;
+    scale*)                         echo "deployment.apps/mock-deploy scaled" ;;
+    delete\ pod*)                   echo "pod \"mock-pod\" deleted" ;;
+    get\ secrets*)                  echo "secret/mock-secret" ;;
+    get\ secret*)                   printf '{"data":{"username":"dGVzdA==","password":"c2VjcmV0"}}\n' ;;
+    get\ svc*)                      echo "service/mock-svc" ;;
+    cp*)                            echo "[mock] kubectl cp $*" ;;
     *) : ;;
 esac
 exit 0
@@ -326,6 +341,22 @@ cat > "$MOCKBIN/ncdu" <<'EOF'
 echo "[mock] ncdu $*"
 exit 0
 EOF
+
+# --- ruby/java/db: no-op mocks so new category tests don't need real tools ---
+for cmd in gem rbenv rvm bundle rspec mvn psql mysql redis-cli pg_dump jar unzip; do
+cat > "$MOCKBIN/$cmd" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+    env)       echo "/mock/gem/dir" ;;  # gem env gemdir
+    cleanup)   echo "[mock] gem cleanup" ;;
+    outdated)  echo "[mock] bundle outdated" ;;
+    exec)      echo "[mock] bundle exec \${*:2}" ;;
+    versions)  echo "3.2.0" ;;  # rbenv versions --bare
+    *)         echo "[mock] $cmd \$*" ;;
+esac
+exit 0
+EOF
+done
 
 # --- generic silent no-ops: clipboard tools, media/app launchers, system tools ---
 for cmd in afplay xdg-open open killall dscacheutil systemd-resolve pbcopy xclip wl-copy 7z unrar tldr; do
@@ -614,6 +645,9 @@ runs  "gcleanup"           "gcleanup"
 runs  "grecentbranch"      "grecentbranch 5"
 runs  "gcamend"            "git checkout -q -b gcamend-test && git commit --allow-empty -q -m 'before amend' && gcamend 'after amend' && git checkout -q main"
 runs  "gdiffstage"         "echo staged >> file1.txt && git add file1.txt && gdiffstage; git reset HEAD file1.txt"
+run   "greview(no-gh)"     "out=\$(greview 2>&1); echo \"\$out\" | grep -qiE 'opening|compare|origin' && echo ok || echo fail"
+run   "gstats"             "gstats | grep -q 'Commit counts' && echo ok || echo fail"
+run   "gstats(--since)"    "gstats --since 2000-01-01 | grep -q 'Lines added' && echo ok || echo fail"
 
 #########################################################################
 # 3. DOCKER & KUBERNETES (docker/kubectl fully mocked — no real daemon touched)
@@ -625,6 +659,7 @@ run  "dclean"              "dclean"
 run  "dockerlogs"          "dockerlogs mockcontainer"
 run  "dsh"                 "dsh"
 run  "dockersizes"         "dockersizes"
+run  "dimages(no-fzf)"     "out=\$(dimages 2>&1); true"
 run  "k8sctx"              "k8sctx"
 run  "klogs"                "klogs"
 run  "kexec"                "kexec"
@@ -636,6 +671,141 @@ run  "dbuild(auto-tag)"     "dbuild"
 run  "kns"                  "kns mock-ns"
 run  "kdesc"                "kdesc"
 run  "kport"                "kport 8080 mock-pod 80"
+run  "dstats"               "dstats"
+run  "dcup"                 "dcup"
+run  "dcdown"               "dcdown"
+run  "dhealth"              "dhealth"
+run  "dvols"                "dvols"
+run  "dports"               "dports"
+run  "krestart"             "krestart"
+run  "kscale"               "kscale 3"
+run  "kdel"                 "kdel"
+run  "ksecret"              "ksecret"
+run  "kcp"                  "kcp /dev/null /tmp/test.txt"
+run  "kcp(no-args)"         "kcp; [[ \$? -ne 0 ]]"
+
+#########################################################################
+# 3b. RUBY
+#########################################################################
+section "Ruby"
+run  "gemclean"    "gemclean"
+run  "rbver"       "rbver; true"
+run  "rboutdated"  "rboutdated; true"
+run  "rspecf"      "rspecf; true"
+
+#########################################################################
+# 3c. JAVA
+#########################################################################
+section "Java"
+run  "m2size"      "m2size"
+run  "gradlesize"  "gradlesize"
+run  "jarinfo(no-arg)" "jarinfo; [[ \$? -ne 0 ]]"
+run  "javaver"     "javaver; true"
+run  "mvntree"     "mvntree; true"
+
+#########################################################################
+# 3d. DATABASE
+#########################################################################
+section "Database"
+run  "pgc"         "pgc; true"
+run  "myc"         "myc; true"
+run  "redisc"      "redisc; true"
+run  "pgdump(no-arg)"    "pgdump; [[ \$? -ne 0 ]]"
+run  "pgdump"      "pgdump testdb; true"
+run  "dbforward(no-arg)" "dbforward; [[ \$? -ne 0 ]]"
+run  "dbforward"   "dbforward 5432 5432"
+
+#########################################################################
+# 12e. GENERAL DEV
+#########################################################################
+section "General Dev"
+run  "serve(no-server)"  "out=\$(serve 19999 2>&1); true"
+run  "todogrep"          "echo '# TODO: fix this' > td_test.txt && todogrep . | grep -q TODO; rm -f td_test.txt"
+run  "basec(dec)"        "basec 42 | grep -q 'Dec: 42'"
+run  "basec(hex)"        "basec 0xff | grep -q 'Dec: 255'"
+run  "basec(no-arg)"     "basec; [[ \$? -ne 0 ]]"
+run  "colorconv(hex)"    "colorconv '#ff8800' | grep -q 'RGB: 255'"
+run  "colorconv(rgb)"    "colorconv 255 136 0 | grep -q 'Hex:'"
+run  "colorconv(no-arg)" "colorconv; [[ \$? -ne 0 ]]"
+run  "tunnel(no-arg)"    "tunnel; [[ \$? -ne 0 ]]"
+run  "tunnel(no-ngrok)"  "tunnel 8080; true"
+run  "bench"             "bench 2 true | grep -q avg"
+run  "bench(no-arg)"     "bench; [[ \$? -ne 0 ]]"
+run  "diffdir(same)"     "diffdir . . ; true"
+run  "diffdir(no-arg)"   "diffdir; [[ \$? -ne 0 ]]"
+run  "openat(colon)"     "EDITOR=cat openat file1.txt:1; true"
+run  "openat(args)"      "EDITOR=cat openat file1.txt 1; true"
+run  "openat(no-arg)"    "openat; [[ \$? -ne 0 ]]"
+run  "worktree(bad-sub)" "worktree bogus; [[ \$? -ne 0 ]]"
+run  "worktree(switch)"  "worktree switch; true"
+run  "licensegen(mit)"   "licensegen mit 'Test User' 2024 && grep -q 'MIT License' LICENSE; rm -f LICENSE"
+run  "licensegen(apache2)" "licensegen apache2 'Test User' 2024 && grep -q 'Apache' LICENSE; rm -f LICENSE"
+run  "licensegen(bad)"   "licensegen bogus; [[ \$? -ne 0 ]]"
+
+#########################################################################
+# 12f. REACT / VITE
+#########################################################################
+section "React/Vite"
+run  "mkvite(no-arg)"    "mkvite; [[ \$? -ne 0 ]]"
+run  "vitedev(no-pkg)"   "vitedev; true"
+run  "vitebuild(no-pkg)" "vitebuild; true"
+run  "viteclean"         "mkdir -p node_modules dist && touch package-lock.json && viteclean; true"
+run  "reactcomp(no-arg)" "reactcomp; [[ \$? -ne 0 ]]"
+run  "reactcomp(js)"     "reactcomp MyBtn /tmp/sharmory-comp-test && [ -f /tmp/sharmory-comp-test/MyBtn/MyBtn.jsx ] && grep -q 'MyBtn' /tmp/sharmory-comp-test/MyBtn/MyBtn.jsx; ret=\$?; rm -rf /tmp/sharmory-comp-test; [ \$ret -eq 0 ]"
+run  "reactcomp(ts)"     "touch tsconfig.json && reactcomp TsBtn /tmp/sharmory-tsbtn && [ -f /tmp/sharmory-tsbtn/TsBtn/TsBtn.tsx ]; ret=\$?; rm -rf /tmp/sharmory-tsbtn tsconfig.json; [ \$ret -eq 0 ]"
+run  "viteenv(no-example)" "viteenv; [[ \$? -ne 0 ]]"
+run  "viteenv(copies)"   "printf 'VITE_API=http://localhost\n' > .env.example && viteenv && [ -f .env ] && grep -q VITE_API .env; ret=\$?; rm -f .env .env.example; [ \$ret -eq 0 ]"
+run  "viteenv(exists)"   "touch .env && viteenv; [ -f .env ]; ret=\$?; rm -f .env; [ \$ret -eq 0 ]"
+run  "vitelint(no-tools)" "vitelint 2>&1 | grep -q 'ESLint'; true"
+run  "vitelint(no-tsconfig)" "vitelint 2>&1 | grep -q 'skipping tsc'; true"
+run  "vitelint(tsconfig)" "touch tsconfig.json && vitelint 2>&1 | grep -q 'TypeScript'; ret=\$?; rm -f tsconfig.json; [ \$ret -eq 0 ]"
+run  "mkviteapi(express)" "mkviteapi sharmory-api-test && [ -f sharmory-api-test/package.json ] && grep -q 'express' sharmory-api-test/package.json; ret=\$?; rm -rf sharmory-api-test; [ \$ret -eq 0 ]"
+run  "mkviteapi(fastify)" "mkviteapi sharmory-api-test2 --fastify && grep -q 'fastify' sharmory-api-test2/package.json; ret=\$?; rm -rf sharmory-api-test2; [ \$ret -eq 0 ]"
+run  "mkviteapi(exists)"  "mkdir -p sharmory-api-dup && mkviteapi sharmory-api-dup; ret=\$?; rm -rf sharmory-api-dup; [[ \$ret -ne 0 ]]"
+
+#########################################################################
+# 12g. CRON
+#########################################################################
+section "Cron"
+run  "cronlist(empty)"    "cronlist; true"
+run  "cronadd(no-arg)"    "cronadd; [[ \$? -ne 0 ]]"
+run  "cronedit"           "cronedit; true"
+run  "cronrm(no-fzf)"     "cronrm; true"
+run  "cronhuman(no-arg)"  "cronhuman; [[ \$? -ne 0 ]]"
+run  "cronhuman(every-min)" "cronhuman '* * * * *' | grep -q 'every minute'"
+run  "cronhuman(hourly)"  "cronhuman '0 * * * *' | grep -q 'every hour'"
+run  "cronhuman(daily)"   "cronhuman '30 9 * * *' | grep -q '09:30'"
+run  "cronhuman(dow)"     "cronhuman '0 8 * * 1' | grep -q 'Mon'"
+run  "cronnext(no-arg)"   "cronnext; [[ \$? -ne 0 ]]"
+run  "cronnext(no-croniter)" "cronnext '* * * * *' 2 | grep -q -i 'croniter\|202'; true"
+
+#########################################################################
+# 12h. API TOOLS
+#########################################################################
+section "API"
+run  "apiwatch(no-arg)"   "apiwatch; [[ \$? -ne 0 ]]"
+run  "apimock(no-arg)"    "apimock; [[ \$? -ne 0 ]]"
+run  "apidiff(no-arg)"    "apidiff; [[ \$? -ne 0 ]]"
+run  "apidiff(files)"     "printf '{\"a\":1}' > /tmp/sha-a.json && printf '{\"a\":2}' > /tmp/sha-b.json && apidiff /tmp/sha-a.json /tmp/sha-b.json; ret=\$?; rm -f /tmp/sha-a.json /tmp/sha-b.json; [ \$ret -ne 0 ]"
+run  "curltime(no-arg)"   "curltime; [[ \$? -ne 0 ]]"
+run  "openapipp(no-arg)"  "openapipp; [[ \$? -ne 0 ]]"
+
+#########################################################################
+# 12i. ENV TOOLS
+#########################################################################
+section "Env"
+run  "envgen(no-src)"     "envgen missing-src.env; [[ \$? -ne 0 ]]"
+run  "envgen(strips)"     "printf 'FOO=bar\nBAZ=qux\n' > /tmp/sha-test.env && envgen /tmp/sha-test.env /tmp/sha-test-example.env && grep -q 'FOO=' /tmp/sha-test-example.env && ! grep -q 'bar' /tmp/sha-test-example.env; ret=\$?; rm -f /tmp/sha-test.env /tmp/sha-test-example.env; [ \$ret -eq 0 ]"
+run  "envrequire(no-arg)" "envrequire; [[ \$? -ne 0 ]]"
+run  "envrequire(set)"    "SHARMORY_VERSION=1 envrequire SHARMORY_VERSION | grep -q 'set'"
+run  "envrequire(missing)" "envrequire SHARMORY_NONEXISTENT_VAR_XYZ | grep -q 'Missing'"
+run  "envexport(no-file)" "envexport missing.env; [[ \$? -ne 0 ]]"
+run  "envexport(outputs)" "printf 'FOO=bar\n' > /tmp/sha-env.env && envexport /tmp/sha-env.env | grep -q \"export FOO='bar'\"; ret=\$?; rm -f /tmp/sha-env.env; [ \$ret -eq 0 ]"
+run  "envmask(no-file)"   "envmask missing.env; [[ \$? -ne 0 ]]"
+run  "envmask(masks)"     "printf 'MY_SECRET=supersecretvalue\nFOO=bar\n' > /tmp/sha-mask.env && envmask /tmp/sha-mask.env | grep MY_SECRET | grep -q '\*\*\*\*'; ret=\$?; rm -f /tmp/sha-mask.env; [ \$ret -eq 0 ]"
+run  "envmask(plain)"     "printf 'FOO=bar\n' > /tmp/sha-mask2.env && envmask /tmp/sha-mask2.env | grep -q 'FOO=bar'; ret=\$?; rm -f /tmp/sha-mask2.env; [ \$ret -eq 0 ]"
+run  "envsync(no-files)"  "envsync missing.env missing-example.env; [[ \$? -ne 0 ]]"
+run  "envsync(diff)"      "printf 'A=1\nB=2\n' > /tmp/sha-s.env && printf 'A=\nC=\n' > /tmp/sha-s-ex.env && envsync /tmp/sha-s.env /tmp/sha-s-ex.env | grep -q 'C'; ret=\$?; rm -f /tmp/sha-s.env /tmp/sha-s-ex.env; [ \$ret -eq 0 ]"
 
 #########################################################################
 # 4. GO (go binary fully mocked — no real build/test runs)
@@ -761,6 +931,9 @@ run  "headers"      "headers https://example.com"
 run  "proxy(on)"    "proxy on http://proxy.local:3128"
 run  "proxy(off)"   "proxy on http://p:1 && proxy off"
 run  "proxy(status)"  "proxy status"
+run  "speed(fallback)"  "out=\$(speed 2>&1); echo \"\$out\" | grep -qiE 'speed|Download|Mbps|fallback|install' && echo ok || echo fail"
+run  "sshcopy(no-arg)"  "out=\$(sshcopy 2>&1); echo \"\$out\" | grep -q 'Usage:' && echo ok || echo fail"
+run  "sshcopy(key)"     "sshcopy user@mockhost 2>&1; true"
 run  "tlscheck"       "tlscheck example.com"
 run  "portscan"       "portscan 127.0.0.1 65530 65532"
 run  "ipinfo"         "ipinfo 8.8.8.8"
@@ -803,6 +976,8 @@ run  "envdiff(same)" "printf 'A=1\n' > /tmp/ec && envdiff /tmp/ec /tmp/ec; rm -f
 run  "ports"       "ports"
 run  "sysinfo"     "sysinfo"
 run  "openports"   "openports"
+skip "cpuwatch"    "loop function — not suitable for automated testing"
+skip "memwatch"    "loop function — not suitable for automated testing"
 
 #########################################################################
 # 10. PRODUCTIVITY & MISC
@@ -848,6 +1023,8 @@ run  "hist"           "hist; true"
 run  "mktemplate"     "mkdir -p \"\$HOME/.sharmory/templates/mytemplate\" && echo hi > \"\$HOME/.sharmory/templates/mytemplate/README.md\" && cd /tmp && rm -rf sharmory-tmpl-test && mktemplate mytemplate sharmory-tmpl-test && [ -f /tmp/sharmory-tmpl-test/README.md ]; ret=\$?; rm -rf /tmp/sharmory-tmpl-test; exit \$ret"
 run  "envswitch(list)" "envswitch"
 run  "envswitch(load)" "mkdir -p \"\$HOME/.sharmory/envprofiles\" && printf 'TESTVAR=hello\n' > \"\$HOME/.sharmory/envprofiles/testprofile.env\" && envswitch testprofile && [ \"\$TESTVAR\" = hello ]"
+run  "alias-list"      "alias ll='ls -la' 2>/dev/null; out=\$(alias-list 2>&1); echo \"\$out\" | grep -q 'ALIAS' && echo ok || echo fail"
+run  "alias-list(pat)" "alias ll='ls -la' 2>/dev/null; alias-list ll | grep -q 'ALIAS' && echo ok || echo fail"
 
 #########################################################################
 # 11. CI / JENKINS (curl mocked — no real Jenkins server contacted)

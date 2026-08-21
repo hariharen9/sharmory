@@ -570,6 +570,60 @@ function gdiffstage {
     git diff --cached
 }
 
+# Open the last open pull request for the current branch on GitHub
+# Falls back to gpr if gh CLI is not available
+# Usage: greview
+function greview {
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        gpr
+        return
+    }
+    $branch = git branch --show-current 2>$null
+    if (-not $branch) { Write-Host "Not on a branch."; return }
+    $pr_url = gh pr view $branch --json url -q .url 2>$null
+    if ($pr_url) {
+        Write-Host "Opening PR: $pr_url"
+        Start-Process $pr_url
+    } else {
+        Write-Host "No open PR found for branch '$branch'. Opening compare URL..."
+        gpr
+    }
+}
+
+# Show per-author commit counts and lines added/deleted for the current repo
+# Usage: gstats [–since <date>]
+function gstats {
+    param([string]$Since)
+    $sinceArg = if ($Since) { "--since=$Since" } else { $null }
+    Write-Host "Commit counts by author:"
+    $args = @('log', '--format=%aN')
+    if ($sinceArg) { $args += $sinceArg }
+    & git @args |
+        Group-Object |
+        Sort-Object Count -Descending |
+        ForEach-Object { "  {0,5}  {1}" -f $_.Count, $_.Name }
+
+    Write-Host ""
+    Write-Host "Lines added / deleted by author:"
+    $statsArgs = @('log', '--numstat', '--format=%aN')
+    if ($sinceArg) { $statsArgs += $sinceArg }
+    $added   = @{}
+    $deleted = @{}
+    $author  = ""
+    & git @statsArgs | ForEach-Object {
+        if ($_ -match '^\d') {
+            $parts = $_ -split '\s+'
+            $added[$author]   = ($added[$author]   -as [int]) + ($parts[0] -as [int])
+            $deleted[$author] = ($deleted[$author] -as [int]) + ($parts[1] -as [int])
+        } elseif ($_.Trim() -ne '') {
+            $author = $_.Trim()
+        }
+    }
+    $added.Keys |
+        Sort-Object { $added[$_] } -Descending |
+        ForEach-Object { "  {0,-30}  +{1,-8}  -{2}" -f $_, $added[$_], $deleted[$_] }
+}
+
 #########################################################################
 # 3. DOCKER & KUBERNETES
 #########################################################################
@@ -610,6 +664,30 @@ function dockerlogs {
 # Show human-readable sizes of local Docker images
 function dockersizes {
     docker images --format "{{.Repository}}:{{.Tag}}`t{{.Size}}"
+}
+
+# Interactively pick a local Docker image via fzf; run, inspect, or remove it
+# Usage: dimages
+function dimages {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $selection = docker images --format "{{.Repository}}:{{.Tag}}`t{{.Size}}`t{{.ID}}" |
+        fzf --prompt="image> " --header="Enter to act on image"
+    if (-not $selection) { return }
+    $image = ($selection -split '\s+')[0]
+    Write-Host "Image: $image"
+    $action = Read-Host "Action: (r)un shell  (i)nspect  (d)elete  [r/i/d]"
+    switch ($action) {
+        "r" { docker run --rm -it $image sh }
+        "i" {
+            $out = docker inspect $image
+            try { $out | ConvertFrom-Json | ConvertTo-Json -Depth 10 } catch { $out }
+        }
+        "d" {
+            $confirm = Read-Host "Delete $image? (y/N)"
+            if ($confirm -eq "y") { docker rmi $image } else { Write-Host "Cancelled." }
+        }
+        default { Write-Host "Aborted." }
+    }
 }
 
 # Show which pods are consuming the most CPU/memory (requires metrics-server)
@@ -715,6 +793,820 @@ function kexec {
         ForEach-Object { $_ -replace '^pod/', '' }
     if (-not $pod) { return }
     kubectl exec -it $pod -- sh -c "command -v bash >/dev/null && exec bash || exec sh"
+}
+
+# One-shot resource usage snapshot for all running containers
+function dstats {
+    docker stats --no-stream --format "table {{.Name}}`t{{.CPUPerc}}`t{{.MemUsage}}`t{{.NetIO}}"
+}
+
+# Bring up docker-compose services in the background
+function dcup {
+    docker compose up -d @args
+}
+
+# Tear down docker-compose services
+function dcdown {
+    docker compose down @args
+}
+
+# Show health status of all containers that define a healthcheck
+function dhealth {
+    docker ps --format "{{.Names}}" | ForEach-Object {
+        $status = docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' $_
+        "{0,-30} {1}" -f $_, $status
+    }
+}
+
+# Human-readable sizes of local Docker volumes
+function dvols {
+    docker system df -v --format "{{.Name}}`t{{.Size}}"
+}
+
+# Show published port mappings for all running containers
+function dports {
+    docker ps --format "table {{.Names}}`t{{.Ports}}"
+}
+
+# Rollout-restart a picked deployment
+function krestart {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $dep = kubectl get deployments -o name | fzf --prompt="deployment> " |
+        ForEach-Object { $_ -replace '^deployment.apps/', '' }
+    if (-not $dep) { return }
+    kubectl rollout restart "deployment/$dep"
+    kubectl rollout status "deployment/$dep"
+}
+
+# Scale a picked deployment to a given replica count
+# Usage: kscale <replicas>
+function kscale {
+    param([Parameter(Mandatory)][int]$Replicas)
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $dep = kubectl get deployments -o name | fzf --prompt="deployment> " |
+        ForEach-Object { $_ -replace '^deployment.apps/', '' }
+    if (-not $dep) { return }
+    kubectl scale "deployment/$dep" --replicas=$Replicas
+}
+
+# Force-delete a picked (possibly stuck) pod
+function kdel {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $pod = kubectl get pods -o name | fzf --prompt="pod to delete> " |
+        ForEach-Object { $_ -replace '^pod/', '' }
+    if (-not $pod) { return }
+    kubectl delete pod $pod --grace-period=0 --force
+}
+
+# Decode and print the data of a picked secret
+function ksecret {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $sec = kubectl get secrets -o name | fzf --prompt="secret> " |
+        ForEach-Object { $_ -replace '^secret/', '' }
+    if (-not $sec) { return }
+    $data = (kubectl get secret $sec -o json | ConvertFrom-Json).data
+    $data.PSObject.Properties | ForEach-Object {
+        $decoded = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_.Value))
+        Write-Host "$($_.Name): $decoded"
+    }
+}
+
+# Copy a file to/from a picked pod
+# Usage: kcp <source> <destination>   (-Pull copies pod:source -> destination)
+function kcp {
+    param(
+        [switch]$Pull,
+        [Parameter(Mandatory, Position=0)][string]$Source,
+        [Parameter(Mandatory, Position=1)][string]$Destination
+    )
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    $pod = kubectl get pods -o name | fzf --prompt="pod> " |
+        ForEach-Object { $_ -replace '^pod/', '' }
+    if (-not $pod) { return }
+    if ($Pull) {
+        kubectl cp "${pod}:$Source" $Destination
+    } else {
+        kubectl cp $Source "${pod}:$Destination"
+    }
+}
+
+#########################################################################
+# 12b. RUBY
+#########################################################################
+
+# Uninstall old/duplicate gem versions, keeping only the latest of each
+function gemclean {
+    gem cleanup
+}
+
+# Fuzzy-pick and switch the active Ruby version (rbenv/rvm aware)
+function rbver {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    if (Get-Command rbenv -ErrorAction SilentlyContinue) {
+        $v = rbenv versions --bare | fzf --prompt="ruby version> "
+        if (-not $v) { return }
+        rbenv local $v
+    } else {
+        Write-Host "No rbenv found"
+    }
+}
+
+# List outdated gems from the current Gemfile.lock
+function rboutdated {
+    bundle outdated
+}
+
+# Re-run only the last-failed RSpec examples
+function rspecf {
+    bundle exec rspec --only-failures @args
+}
+
+#########################################################################
+# 12c. JAVA
+#########################################################################
+
+# Report size of the local Maven repository cache
+function m2size {
+    $path = "$HOME\.m2\repository"
+    if (-not (Test-Path $path)) { Write-Host "~/.m2/repository not found"; return }
+    $size = (Get-ChildItem $path -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+    "{0:N2} MB" -f ($size / 1MB)
+}
+
+# Report size of the local Gradle cache
+function gradlesize {
+    $path = "$HOME\.gradle\caches"
+    if (-not (Test-Path $path)) { Write-Host "~/.gradle/caches not found"; return }
+    $size = (Get-ChildItem $path -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+    "{0:N2} MB" -f ($size / 1MB)
+}
+
+# Inspect a jar's manifest and top-level contents
+# Usage: jarinfo <path-to-jar>
+function jarinfo {
+    param([Parameter(Mandatory)][string]$JarPath)
+    Write-Host "--- Manifest ---"
+    $tmpDir = Join-Path $env:TEMP ("jarinfo-" + [guid]::NewGuid().ToString("N").Substring(0,8))
+    New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
+    try {
+        jar xf $JarPath META-INF/MANIFEST.MF 2>$null
+        $mf = Join-Path $tmpDir "META-INF\MANIFEST.MF"
+        if (Test-Path $mf) { Get-Content $mf }
+    } finally {
+        Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
+    }
+    Write-Host "--- Contents ---"
+    jar tf $JarPath
+}
+
+# Fuzzy-pick and switch JAVA_HOME (jenv aware)
+function javaver {
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    if (Get-Command jenv -ErrorAction SilentlyContinue) {
+        $v = jenv versions --bare | fzf --prompt="java version> "
+        if (-not $v) { return }
+        jenv local $v
+    } else {
+        Write-Host "No jenv found"
+    }
+}
+
+# Print the Maven dependency tree for the current project
+function mvntree {
+    mvn dependency:tree
+}
+
+#########################################################################
+# 12d. DATABASE
+#########################################################################
+
+# Connect to Postgres using PG* env vars (or defaults)
+function pgc {
+    $h = if ($env:PGHOST) { $env:PGHOST } else { "localhost" }
+    $p = if ($env:PGPORT) { $env:PGPORT } else { "5432" }
+    $d = if ($env:PGDATABASE) { $env:PGDATABASE } else { "postgres" }
+    $u = if ($env:PGUSER) { $env:PGUSER } else { "postgres" }
+    psql -h $h -p $p -U $u -d $d
+}
+
+# Connect to MySQL using MYSQL_* env vars (or defaults)
+function myc {
+    $h = if ($env:MYSQL_HOST) { $env:MYSQL_HOST } else { "localhost" }
+    $p = if ($env:MYSQL_PORT) { $env:MYSQL_PORT } else { "3306" }
+    $u = if ($env:MYSQL_USER) { $env:MYSQL_USER } else { "root" }
+    mysql -h $h -P $p -u $u -p $env:MYSQL_DATABASE
+}
+
+# Connect to Redis using REDIS_* env vars
+function redisc {
+    $h = if ($env:REDIS_HOST) { $env:REDIS_HOST } else { "localhost" }
+    $p = if ($env:REDIS_PORT) { $env:REDIS_PORT } else { "6379" }
+    redis-cli -h $h -p $p
+}
+
+# Dump a Postgres database to a timestamped .sql file
+# Usage: pgdump <database>
+function pgdump {
+    param([Parameter(Mandatory)][string]$Database)
+    $file = "${Database}_$(Get-Date -Format 'yyyyMMdd_HHmmss').sql"
+    pg_dump $Database > $file
+    Write-Host "Dumped to $file"
+}
+
+# Port-forward to a picked k8s service and print a ready-to-use connect hint
+# Usage: dbforward <local-port> <remote-port>
+function dbforward {
+    param(
+        [Parameter(Mandatory)][int]$LocalPort,
+        [Parameter(Mandatory)][int]$RemotePort
+    )
+    if (-not (Test-SharmoryDependency fzf)) { return }
+    if (-not (Test-SharmoryDependency kubectl)) { return }
+    $svc = kubectl get svc -o name | fzf --prompt="service> " |
+        ForEach-Object { $_ -replace '^service/', '' }
+    if (-not $svc) { return }
+    Write-Host "Forwarding localhost:$LocalPort -> svc/$svc`:$RemotePort (Ctrl-C to stop)"
+    kubectl port-forward "svc/$svc" "${LocalPort}:${RemotePort}"
+}
+
+#########################################################################
+# 12e. GENERAL DEV
+#########################################################################
+
+# Serve the current directory over HTTP
+# Usage: serve [port]
+function serve {
+    param([int]$Port = 8000)
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        Write-Host "Serving $(Get-Location) on http://localhost:$Port"
+        python -m http.server $Port
+    } else {
+        npx --yes serve -l $Port .
+    }
+}
+
+# Find TODO/FIXME/HACK/XXX comments across the codebase
+# Usage: todogrep [path]
+function todogrep {
+    param([string]$Path = ".")
+    Get-ChildItem -Path $Path -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\(\.git|node_modules|vendor|\.venv|dist|build)\\' } |
+        Select-String -Pattern "TODO|FIXME|HACK|XXX"
+}
+
+# Convert a number between hex, decimal, octal, and binary
+# Usage: basec <number>
+function basec {
+    param([Parameter(Mandatory)][string]$Number)
+    $dec = if ($Number -match '^0x') { [Convert]::ToInt64($Number.Substring(2), 16) }
+           elseif ($Number -match '^0b') { [Convert]::ToInt64($Number.Substring(2), 2) }
+           elseif ($Number -match '^0o') { [Convert]::ToInt64($Number.Substring(2), 8) }
+           else { [Convert]::ToInt64($Number, 10) }
+    "Dec: $dec"
+    "Hex: 0x{0:x}" -f $dec
+    "Oct: 0o{0}" -f [Convert]::ToString($dec, 8)
+    "Bin: {0}" -f [Convert]::ToString($dec, 2)
+}
+
+# Convert a hex color to RGB (or RGB to hex)
+# Usage: colorconv <#rrggbb>  |  colorconv <r> <g> <b>
+function colorconv {
+    param(
+        [Parameter(Mandatory, Position=0)][string]$First,
+        [int]$G,
+        [int]$B
+    )
+    if ($First -match '^#') {
+        $h = $First.TrimStart('#')
+        $r = [Convert]::ToInt32($h.Substring(0,2), 16)
+        $g = [Convert]::ToInt32($h.Substring(2,2), 16)
+        $b = [Convert]::ToInt32($h.Substring(4,2), 16)
+        "RGB: $r, $g, $b"
+    } else {
+        "Hex: #{0:x2}{1:x2}{2:x2}" -f [int]$First, $G, $B
+    }
+}
+
+# Open a quick ngrok tunnel to a local port
+# Usage: tunnel <port>
+function tunnel {
+    param([Parameter(Mandatory)][int]$Port)
+    if (-not (Test-SharmoryDependency ngrok)) { return }
+    ngrok http $Port
+}
+
+# Time N runs of a command and report min/max/avg
+# Usage: bench <runs> {scriptblock}
+function bench {
+    param(
+        [Parameter(Mandatory)][int]$Runs,
+        [Parameter(Mandatory, Position=1)][scriptblock]$Command
+    )
+    $times = @()
+    for ($i = 1; $i -le $Runs; $i++) {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        & $Command | Out-Null
+        $sw.Stop()
+        $times += $sw.Elapsed.TotalSeconds
+        "Run {0}: {1:N3}s" -f $i, $sw.Elapsed.TotalSeconds
+    }
+    "`navg: {0:N3}s  min: {1:N3}s  max: {2:N3}s" -f `
+        ($times | Measure-Object -Average).Average,
+        ($times | Measure-Object -Minimum).Minimum,
+        ($times | Measure-Object -Maximum).Maximum
+}
+
+# Recursively diff two directories, summarizing added/removed/changed files
+# Usage: diffdir <dir-a> <dir-b>
+function diffdir {
+    param(
+        [Parameter(Mandatory)][string]$PathA,
+        [Parameter(Mandatory)][string]$PathB
+    )
+    Compare-Object (Get-ChildItem -Recurse $PathA) (Get-ChildItem -Recurse $PathB) -Property Name
+}
+
+# Open $EDITOR at a specific file and line
+# Usage: openat <file>[:<line>]  |  openat <file> <line>
+function openat {
+    param(
+        [Parameter(Mandatory)][string]$File,
+        [int]$Line = 1
+    )
+    if ($File -match '^(.+):(\d+)$') {
+        $File = $matches[1]
+        $Line = [int]$matches[2]
+    }
+    $editor = if ($env:EDITOR) { $env:EDITOR } else { "notepad" }
+    & $editor "+$Line" $File
+}
+
+# Fuzzy-manage git worktrees: add, switch, or remove
+# Usage: worktree <add|switch|remove> [branch] [path]
+function worktree {
+    param([string]$Action, [string]$Branch, [string]$Path)
+    switch ($Action) {
+        "add" {
+            if (-not $Branch) { Write-Host "Usage: worktree add <branch> [path]"; return }
+            $p = if ($Path) { $Path } else { "../$Branch" }
+            git worktree add $p $Branch
+        }
+        "switch" {
+            if (-not (Test-SharmoryDependency fzf)) { return }
+            $wt = git worktree list | fzf --prompt="worktree> " |
+                ForEach-Object { ($_ -split '\s+')[0] }
+            if (-not $wt) { return }
+            Set-Location $wt
+        }
+        "remove" {
+            if (-not (Test-SharmoryDependency fzf)) { return }
+            $wt = git worktree list | fzf --prompt="remove worktree> " |
+                ForEach-Object { ($_ -split '\s+')[0] }
+            if (-not $wt) { return }
+            git worktree remove $wt
+        }
+        default { Write-Host "Usage: worktree <add|switch|remove> [args...]" }
+    }
+}
+
+# Generate a LICENSE file in the current directory
+# Usage: licensegen <mit|apache2> [author] [year]
+function licensegen {
+    param(
+        [string]$Kind = "mit",
+        [string]$Author = (git config user.name 2>$null),
+        [string]$Year = (Get-Date -Format "yyyy")
+    )
+    if (-not $Author) { $Author = "Your Name" }
+    switch ($Kind) {
+        "mit" {
+            "MIT License`n`nCopyright (c) $Year $Author`n`nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the `"Software`"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:`n`nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.`n`nTHE SOFTWARE IS PROVIDED `"AS IS`", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE." | Out-File LICENSE -Encoding utf8
+        }
+        "apache2" {
+            "Apache License 2.0`n`nCopyright $Year $Author`n`nLicensed under the Apache License, Version 2.0 (the `"License`"); you may not use this file except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0" | Out-File LICENSE -Encoding utf8
+        }
+        default { Write-Host "Usage: licensegen <mit|apache2> [author] [year]"; return }
+    }
+    Write-Host "LICENSE ($Kind) written for $Author, $Year"
+}
+
+#########################################################################
+# 12f. REACT / VITE
+#########################################################################
+
+# Scaffold a new Vite + React app, strip boilerplate, install deps, git init
+# Usage: mkvite <app-name> [template]
+function mkvite {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [string]$Template = "react-ts"
+    )
+    Write-Host "Scaffolding $Name (template: $Template)..."
+    npx --yes create-vite@latest $Name --template $Template
+    if ($LASTEXITCODE -ne 0) { return }
+    Set-Location $Name
+    Remove-Item -Path "src/assets/react.svg", "public/vite.svg" -ErrorAction SilentlyContinue
+    if (Test-Path "src/App.css") { Set-Content "src/App.css" "" }
+    if (Test-Path "src/index.css") {
+        @"
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+}
+"@ | Set-Content "src/index.css"
+    }
+    Write-Host "Installing dependencies..."
+    npm install
+    if (-not (Test-Path ".git")) {
+        git init -q
+        git add -A
+        git commit -q -m "chore: scaffold $Name with Vite"
+    }
+    Write-Host "Done. Now in $Name. Run 'npm run dev' to start."
+}
+
+# Start the Vite dev server and open the browser
+function vitedev {
+    npm run dev -- --open
+}
+
+# Production build, then report the dist/ bundle size breakdown
+function vitebuild {
+    npm run build
+    if ($LASTEXITCODE -ne 0) { return }
+    Write-Host "`n--- Bundle sizes ---"
+    Get-ChildItem "dist/assets" -File -ErrorAction SilentlyContinue |
+        Sort-Object Length -Descending |
+        ForEach-Object { "{0,10:N2} KB  {1}" -f ($_.Length / 1KB), $_.Name }
+    $total = (Get-ChildItem "dist" -Recurse -File -ErrorAction SilentlyContinue |
+        Measure-Object -Property Length -Sum).Sum
+    "Total: {0:N2} MB" -f ($total / 1MB)
+}
+
+# Wipe node_modules + lockfile + dist, reinstall clean
+function viteclean {
+    Write-Host "Removing node_modules, dist, and lockfile..."
+    Remove-Item -Recurse -Force node_modules, dist, package-lock.json -ErrorAction SilentlyContinue
+    npm install
+}
+
+# Scaffold a new React component with boilerplate (TS-aware)
+# Usage: reactcomp <ComponentName> [dir]
+function reactcomp {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [string]$Dir = "src/components"
+    )
+    $target = Join-Path $Dir $Name
+    New-Item -ItemType Directory -Path $target -Force | Out-Null
+    $ext = if (Test-Path "tsconfig.json") { "tsx" } else { "jsx" }
+    $indexExt = if ($ext -eq "tsx") { "ts" } else { "js" }
+    @"
+export function $Name() {
+  return (
+    <div className="$Name">
+      $Name
+    </div>
+  );
+}
+"@ | Set-Content (Join-Path $target "$Name.$ext")
+    "export { $Name } from './$Name';" | Set-Content (Join-Path $target "index.$indexExt")
+    Write-Host "Created $target/$Name.$ext"
+}
+
+# Copy .env.example to .env if .env doesn't already exist
+function viteenv {
+    if (Test-Path ".env") {
+        Write-Host ".env already exists, not overwriting"
+        return
+    }
+    if (Test-Path ".env.example") {
+        Copy-Item ".env.example" ".env"
+        Write-Host "Created .env from .env.example"
+    } else {
+        Write-Host "No .env.example found"
+    }
+}
+
+# Run ESLint + Prettier check + TypeScript typecheck in one pass (pre-push gate)
+# Usage: vitelint [--fix]
+function vitelint {
+    param([string]$Mode = "")
+    $fix = $Mode -eq "--fix"
+    $ok = $true
+    Write-Host "==> ESLint..."
+    if (Get-Command eslint -ErrorAction SilentlyContinue) {
+        if ($fix) { eslint --fix . } else { eslint . }
+        if ($LASTEXITCODE -ne 0) { $ok = $false }
+    } else {
+        if ($fix) { npm run lint -- --fix 2>$null } else { npm run lint 2>$null }
+        if ($LASTEXITCODE -ne 0) { $ok = $false }
+    }
+    Write-Host "==> Prettier..."
+    if (Get-Command prettier -ErrorAction SilentlyContinue) {
+        if ($fix) { prettier --write . } else { prettier --check . }
+        if ($LASTEXITCODE -ne 0) { $ok = $false }
+    } else {
+        Write-Host "  prettier not found — skipping"
+    }
+    Write-Host "==> TypeScript..."
+    if (Test-Path "tsconfig.json") {
+        npm exec -- tsc --noEmit
+        if ($LASTEXITCODE -ne 0) { $ok = $false }
+    } else {
+        Write-Host "  No tsconfig.json — skipping tsc"
+    }
+    if ($ok) {
+        Write-Host "✔  vitelint passed"
+    } else {
+        Write-Host "✖  vitelint found issues"
+        throw "vitelint failed"
+    }
+}
+
+# Scaffold a companion API folder (Express by default) alongside a Vite frontend
+# Usage: mkviteapi [name] [--fastify]
+function mkviteapi {
+    param(
+        [string]$Name = "api",
+        [string]$Framework = ""
+    )
+    $fw = if ($Framework -eq "--fastify") { "fastify" } else { "express" }
+    if (Test-Path $Name) {
+        Write-Host "Directory '$Name' already exists"
+        return
+    }
+    New-Item -ItemType Directory -Force (Join-Path $Name "src") | Out-Null
+    @"
+{
+  "name": "$Name",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "$fw": "latest"
+  }
+}
+"@ | Set-Content (Join-Path $Name "package.json")
+    if ($fw -eq "fastify") {
+        @"
+import Fastify from 'fastify'
+const app = Fastify({ logger: true })
+
+app.get('/health', async () => ({ status: 'ok' }))
+
+app.listen({ port: 3001, host: '0.0.0.0' })
+"@ | Set-Content (Join-Path $Name "src/index.js")
+    } else {
+        @"
+import express from 'express'
+const app = express()
+app.use(express.json())
+
+app.get('/health', (_req, res) => res.json({ status: 'ok' }))
+
+app.listen(3001, () => console.log('API listening on :3001'))
+"@ | Set-Content (Join-Path $Name "src/index.js")
+    }
+    "PORT=3001" | Set-Content (Join-Path $Name ".env.example")
+    Write-Host "Scaffolded $fw API in ./$Name/"
+    Write-Host "  cd $Name && npm install && npm run dev"
+}
+
+#########################################################################
+# 12g. CRON (mapped to Windows Task Scheduler under \Sharmory\ folder)
+#########################################################################
+
+# List scheduled tasks created under the Sharmory-managed folder
+function cronlist {
+    Get-ScheduledTask -TaskPath "\Sharmory\" -ErrorAction SilentlyContinue |
+        Select-Object TaskName, State, @{N="Trigger";E={($_.Triggers | Out-String).Trim()}}
+}
+
+# Register a new scheduled task
+# Usage: cronadd <name> <time HH:mm> <command>
+function cronadd {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Time,
+        [Parameter(Mandatory)][string]$Command
+    )
+    $action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-Command `"$Command`""
+    $trigger = New-ScheduledTaskTrigger -Daily -At $Time
+    Register-ScheduledTask -TaskName $Name -TaskPath "\Sharmory\" -Action $action -Trigger $trigger -Force
+    Write-Host "Added scheduled task '$Name' at $Time"
+}
+
+# Fuzzy-pick and remove a Sharmory-managed scheduled task
+function cronrm {
+    if (-not (Test-SharmoryDependency "fzf")) { return }
+    $task = Get-ScheduledTask -TaskPath "\Sharmory\" -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty TaskName |
+        fzf --prompt="remove task> "
+    if (-not $task) { return }
+    Unregister-ScheduledTask -TaskName $task -TaskPath "\Sharmory\" -Confirm:$false
+    Write-Host "Removed: $task"
+}
+
+# Open Task Scheduler GUI
+function cronedit {
+    taskschd.msc
+}
+
+# Translate a 5-field cron expression into a plain-English description
+# Usage: cronhuman "<schedule>"
+function cronhuman {
+    param([Parameter(Mandatory)][string]$Schedule)
+    $parts = $Schedule -split '\s+'
+    $min, $hour, $dom, $month, $dow = $parts
+
+    $desc = if ($min -eq "*" -and $hour -eq "*") {
+        "every minute"
+    } elseif ($min -match '^\*/(\d+)$' -and $hour -eq "*") {
+        "every $($Matches[1]) minutes"
+    } elseif ($hour -eq "*") {
+        "at minute $min of every hour"
+    } elseif ($hour -match '^\*/(\d+)$') {
+        "at minute $min, every $($Matches[1]) hours"
+    } else {
+        "{0:D2}:{1:D2}" -f [int]$hour, [int]$min
+    }
+
+    if ($dom -ne "*") { $desc += ", on day $dom of the month" }
+    if ($month -ne "*") { $desc += ", in month $month" }
+    if ($dow -ne "*") {
+        $days = @("Sun","Mon","Tue","Wed","Thu","Fri","Sat")
+        $dayName = if ($dow -match '^\d+$' -and [int]$dow -lt 7) { $days[[int]$dow] } else { "day $dow" }
+        $desc += ", on $dayName"
+    }
+
+    "$Schedule  ->  $desc"
+}
+
+# Show the next N run times for a cron expression (requires python + croniter)
+# Usage: cronnext <schedule> [count]
+function cronnext {
+    param(
+        [Parameter(Mandatory)][string]$Schedule,
+        [int]$Count = 5
+    )
+    $script = @"
+from croniter import croniter
+from datetime import datetime
+it = croniter('$Schedule', datetime.now())
+for _ in range($Count):
+    print(it.get_next(datetime))
+"@
+    try {
+        python -c $script
+    } catch {
+        Write-Host "Requires python with 'croniter' installed (pip install croniter)"
+    }
+}
+
+#########################################################################
+# 12h. API TOOLS
+#########################################################################
+
+# Poll an endpoint repeatedly, showing status code and response time each hit
+function apiwatch {
+    param(
+        [Parameter(Mandatory)][string]$Url,
+        [int]$Interval = 2
+    )
+    while ($true) {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+            $resp = Invoke-WebRequest -Uri $Url -UseBasicParsing -ErrorAction Stop
+            $code = $resp.StatusCode
+        } catch {
+            $code = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+        }
+        $sw.Stop()
+        "[{0}] {1} {2:N3}s" -f (Get-Date -Format "HH:mm:ss"), $code, $sw.Elapsed.TotalSeconds
+        Start-Sleep -Seconds $Interval
+    }
+}
+
+# Spin up a tiny local mock JSON API server from a file
+function apimock {
+    param(
+        [Parameter(Mandatory)][string]$File,
+        [int]$Port = 3001
+    )
+    Write-Host "Serving mock API from $File on http://localhost:$Port"
+    npx --yes json-server --watch $File --port $Port
+}
+
+# Diff two JSON API responses (from URLs or files)
+function apidiff {
+    param(
+        [Parameter(Mandatory)][string]$A,
+        [Parameter(Mandatory)][string]$B
+    )
+    $ja = if (Test-Path $A) { Get-Content $A -Raw } else { (Invoke-WebRequest $A -UseBasicParsing).Content }
+    $jb = if (Test-Path $B) { Get-Content $B -Raw } else { (Invoke-WebRequest $B -UseBasicParsing).Content }
+    $oa = $ja | ConvertFrom-Json | ConvertTo-Json -Depth 20
+    $ob = $jb | ConvertFrom-Json | ConvertTo-Json -Depth 20
+    Compare-Object ($oa -split "`n") ($ob -split "`n")
+}
+
+# Detailed HTTP timing breakdown
+function curltime {
+    param([Parameter(Mandatory)][string]$Url)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $resp = Invoke-WebRequest -Uri $Url -UseBasicParsing
+    $sw.Stop()
+    "Total: {0:N3}s" -f $sw.Elapsed.TotalSeconds
+    "HTTP status: $($resp.StatusCode)"
+}
+
+# Validate and pretty-print an OpenAPI/Swagger spec
+function openapipp {
+    param([Parameter(Mandatory)][string]$SpecFile)
+    npx --yes @redocly/cli lint $SpecFile
+}
+
+#########################################################################
+# 12i. ENV TOOLS
+#########################################################################
+
+# Generate a .env.example from a real .env, stripping values but keeping keys
+function envgen {
+    param(
+        [string]$Source = ".env",
+        [string]$Output = ".env.example"
+    )
+    if (-not (Test-Path $Source)) { Write-Host "No $Source found"; return }
+    Get-Content $Source |
+        Where-Object { $_ -notmatch '^\s*#' -and $_.Trim() -ne "" } |
+        ForEach-Object { ($_ -split '=')[0] + "=" } |
+        Set-Content $Output
+    Write-Host "Wrote $Output from $Source"
+}
+
+# Verify a list of required env vars are set
+function envrequire {
+    param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$Vars)
+    $missing = $Vars | Where-Object { -not (Get-Item "Env:$_" -ErrorAction SilentlyContinue) }
+    if ($missing.Count -eq 0) {
+        Write-Host "All required env vars are set"
+    } else {
+        Write-Host "Missing: $($missing -join ', ')"
+    }
+}
+
+# Print $env: assignment statements for a .env file
+function envexport {
+    param([string]$File = ".env")
+    if (-not (Test-Path $File)) { Write-Host "No $File found"; return }
+    Get-Content $File |
+        Where-Object { $_ -notmatch '^\s*#' -and $_.Trim() -ne "" } |
+        ForEach-Object {
+            $key, $val = $_ -split '=', 2
+            "`$env:$key = '$val'"
+        }
+}
+
+# Print a .env file with likely secret values masked
+function envmask {
+    param([string]$File = ".env")
+    if (-not (Test-Path $File)) { Write-Host "No $File found"; return }
+    Get-Content $File |
+        Where-Object { $_ -notmatch '^\s*#' -and $_.Trim() -ne "" } |
+        ForEach-Object {
+            $key, $val = $_ -split '=', 2
+            if ($key -match 'key|secret|token|password|pass|auth|credential') {
+                $masked = if ($val -and $val.Length -gt 4) { $val.Substring(0,2) + "****" + $val.Substring($val.Length-2) } else { "****" }
+                "$key=$masked"
+            } else {
+                "$key=$val"
+            }
+        }
+}
+
+# Compare .env against .env.example and report missing/extra keys
+function envsync {
+    param(
+        [string]$EnvFile    = ".env",
+        [string]$ExampleFile = ".env.example"
+    )
+    if (-not (Test-Path $EnvFile) -or -not (Test-Path $ExampleFile)) {
+        Write-Host "Need both $EnvFile and $ExampleFile to exist"
+        return
+    }
+    $envKeys     = Get-Content $EnvFile     | Where-Object { $_ -notmatch '^\s*#' -and $_.Trim() -ne "" } | ForEach-Object { ($_ -split '=')[0] }
+    $exampleKeys = Get-Content $ExampleFile | Where-Object { $_ -notmatch '^\s*#' -and $_.Trim() -ne "" } | ForEach-Object { ($_ -split '=')[0] }
+    Write-Host "--- In $ExampleFile but missing from $EnvFile ---"
+    Compare-Object $exampleKeys $envKeys | Where-Object SideIndicator -eq "<=" | ForEach-Object InputObject
+    Write-Host "--- In $EnvFile but not in $ExampleFile ---"
+    Compare-Object $exampleKeys $envKeys | Where-Object SideIndicator -eq "=>" | ForEach-Object InputObject
 }
 
 #########################################################################
@@ -1761,6 +2653,37 @@ function openports {
     } | Sort-Object { [int]($_ -split '\s+')[1] }
 }
 
+# Live CPU load monitor — refreshes every second until Ctrl-C
+# Usage: cpuwatch [interval-seconds]
+function cpuwatch {
+    param([int]$Interval = 1)
+    Write-Host "CPU load monitor (Ctrl-C to stop) — refresh every ${Interval}s"
+    Write-Host ""
+    while ($true) {
+        $load = (Get-CimInstance Win32_Processor |
+            Measure-Object -Property LoadPercentage -Average).Average
+        Write-Host -NoNewline ("`r  CPU busy: {0,3}%   " -f [int]$load)
+        Start-Sleep -Seconds $Interval
+    }
+}
+
+# Live memory usage monitor — refreshes every second until Ctrl-C
+# Usage: memwatch [interval-seconds]
+function memwatch {
+    param([int]$Interval = 1)
+    Write-Host "Memory monitor (Ctrl-C to stop) — refresh every ${Interval}s"
+    Write-Host ""
+    while ($true) {
+        $os      = Get-CimInstance Win32_OperatingSystem
+        $totalMB = [math]::Round($os.TotalVisibleMemorySize / 1KB, 0)
+        $freeMB  = [math]::Round($os.FreePhysicalMemory      / 1KB, 0)
+        $usedMB  = $totalMB - $freeMB
+        $pct     = [math]::Round(($usedMB / $totalMB) * 100, 0)
+        Write-Host -NoNewline ("`r  used {0} MB / total {1} MB ({2}%)   " -f $usedMB, $totalMB, $pct)
+        Start-Sleep -Seconds $Interval
+    }
+}
+
 #########################################################################
 # 10. PRODUCTIVITY & MISC
 #########################################################################
@@ -2123,6 +3046,83 @@ function envswitch {
     Write-Host "Loaded env profile '$ProfileName' ($count vars) from $profile"
 }
 
+# Run a quick internet speed test via speedtest-cli, fast-cli, or curl fallback
+# Usage: speed
+function speed {
+    if (Get-Command speedtest-cli -EA SilentlyContinue) {
+        speedtest-cli --simple
+    } elseif (Get-Command speedtest -EA SilentlyContinue) {
+        speedtest
+    } elseif (Get-Command fast -EA SilentlyContinue) {
+        fast
+    } else {
+        Write-Host "No speed test tool found."
+        Write-Host "Install one of:"
+        Write-Host "  pip install speedtest-cli   -> speedtest-cli"
+        Write-Host "  npm install -g fast-cli     -> fast"
+        Write-Host ""
+        Write-Host "Falling back to a rough curl download benchmark..."
+        $url = "https://speed.cloudflare.com/__down?bytes=10000000"
+        $tmp = [System.IO.Path]::GetTempFileName()
+        $sw  = [System.Diagnostics.Stopwatch]::StartNew()
+        Invoke-WebRequest $url -OutFile $tmp -UseBasicParsing | Out-Null
+        $sw.Stop()
+        Remove-Item $tmp -ErrorAction SilentlyContinue
+        $ms   = $sw.Elapsed.TotalMilliseconds
+        $mbps = [math]::Round((10 * 8 * 1000) / $ms, 1)
+        Write-Host ("Download ~10 MB in {0:N0} ms -> ~{1} Mbps (rough estimate)" -f $ms, $mbps)
+    }
+}
+
+# Copy your SSH public key to a remote host's authorized_keys
+# Usage: sshcopy <user@host> [identity-file]
+function sshcopy {
+    param(
+        [Parameter(Mandatory)][string]$Target,
+        [string]$IdentityFile
+    )
+    if (Get-Command ssh-copy-id -EA SilentlyContinue) {
+        if ($IdentityFile) { ssh-copy-id -i $IdentityFile $Target }
+        else               { ssh-copy-id $Target }
+        return
+    }
+    $pubkey = if ($IdentityFile) {
+        $f = $IdentityFile -replace '\.pub$', ''
+        if (Test-Path "$f.pub") { Get-Content "$f.pub" -Raw }
+        elseif (Test-Path $IdentityFile) { Get-Content $IdentityFile -Raw }
+    } else {
+        $k = Get-ChildItem "$HOME\.ssh\*.pub" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($k) { Get-Content $k.FullName -Raw }
+    }
+    if (-not $pubkey) {
+        Write-Host "No public key found. Generate one with: genssh <name>"
+        return
+    }
+    $pubkey = $pubkey.Trim()
+    Write-Host "Copying key to $Target..."
+    $cmd = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '$pubkey' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+    ssh $Target $cmd
+    Write-Host "Key copied. Try: ssh $Target"
+}
+
+# List user-defined aliases in a clean, aligned table
+# Usage: alias-list [pattern]
+function alias-list {
+    param([string]$Pattern)
+    $aliases = Get-Alias | Where-Object { $_.Options -notmatch 'ReadOnly|AllScope' } |
+        Sort-Object Name
+    if ($Pattern) {
+        $aliases = $aliases | Where-Object { $_.Name -match $Pattern -or $_.Definition -match $Pattern }
+    }
+    if (-not $aliases) { Write-Host "No user-defined aliases found."; return }
+    $maxLen = ($aliases | ForEach-Object { $_.Name.Length } | Measure-Object -Maximum).Maximum
+    "{0,-$maxLen}  {1}" -f "ALIAS", "COMMAND"
+    "{0,-$maxLen}  {1}" -f ("-" * $maxLen), "-------"
+    $aliases | ForEach-Object {
+        "{0,-$maxLen}  {1}" -f $_.Name, $_.Definition
+    }
+}
+
 #########################################################################
 # 11. CI / JENKINS
 # (requires $env:JENKINS_URL, $env:JENKINS_USER, $env:JENKINS_TOKEN to be set)
@@ -2254,6 +3254,12 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "docker"; Name = "denv"; Description = "Print a container environment"; Usage = "denv <container>"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dbuild"; Description = "Build an image tagged from the directory name"; Usage = "dbuild [tag]"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dsh"; Description = "Fuzzy-pick a container and open a shell"; Usage = "dsh"; Deps = "fzf,docker" }
+        [pscustomobject]@{ Category = "docker"; Name = "dstats"; Description = "One-shot container resource usage snapshot"; Usage = "dstats"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "dcup"; Description = "Bring up docker-compose services"; Usage = "dcup"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "dcdown"; Description = "Tear down docker-compose services"; Usage = "dcdown"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "dhealth"; Description = "Health status of all containers"; Usage = "dhealth"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "dvols"; Description = "Human-readable sizes of Docker volumes"; Usage = "dvols"; Deps = "" }
+        [pscustomobject]@{ Category = "docker"; Name = "dports"; Description = "Published port mappings for all containers"; Usage = "dports"; Deps = "" }
         [pscustomobject]@{ Category = "k8s"; Name = "ktop"; Description = "Pods by CPU or memory"; Usage = "ktop [cpu|memory]"; Deps = "kubectl" }
         [pscustomobject]@{ Category = "k8s"; Name = "kevents"; Description = "Namespace events, most recent last"; Usage = "kevents"; Deps = "kubectl" }
         [pscustomobject]@{ Category = "k8s"; Name = "kns"; Description = "Set the current kubectl namespace"; Usage = "kns <namespace>"; Deps = "kubectl" }
@@ -2262,6 +3268,59 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "k8s"; Name = "k8sctx"; Description = "Fuzzy-switch kubectl context and namespace"; Usage = "k8sctx"; Deps = "fzf,kubectl" }
         [pscustomobject]@{ Category = "k8s"; Name = "klogs"; Description = "Fuzzy-pick a pod and stream its logs"; Usage = "klogs"; Deps = "fzf,kubectl" }
         [pscustomobject]@{ Category = "k8s"; Name = "kexec"; Description = "Fuzzy-pick a pod and exec into it"; Usage = "kexec [shell]"; Deps = "fzf,kubectl" }
+        [pscustomobject]@{ Category = "k8s"; Name = "krestart"; Description = "Rollout-restart a picked deployment"; Usage = "krestart"; Deps = "fzf,kubectl" }
+        [pscustomobject]@{ Category = "k8s"; Name = "kscale"; Description = "Scale a picked deployment"; Usage = "kscale <replicas>"; Deps = "fzf,kubectl" }
+        [pscustomobject]@{ Category = "k8s"; Name = "kdel"; Description = "Force-delete a picked stuck pod"; Usage = "kdel"; Deps = "fzf,kubectl" }
+        [pscustomobject]@{ Category = "k8s"; Name = "ksecret"; Description = "Decode and print a picked secret"; Usage = "ksecret"; Deps = "fzf,kubectl" }
+        [pscustomobject]@{ Category = "k8s"; Name = "kcp"; Description = "Copy a file to/from a picked pod"; Usage = "kcp <source> <destination>"; Deps = "fzf,kubectl" }
+        [pscustomobject]@{ Category = "ruby"; Name = "gemclean"; Description = "Uninstall old/duplicate gem versions"; Usage = "gemclean"; Deps = "gem" }
+        [pscustomobject]@{ Category = "ruby"; Name = "rbver"; Description = "Fuzzy-pick and switch Ruby version"; Usage = "rbver"; Deps = "fzf,rbenv or rvm" }
+        [pscustomobject]@{ Category = "ruby"; Name = "rboutdated"; Description = "List outdated gems from Gemfile.lock"; Usage = "rboutdated"; Deps = "bundle" }
+        [pscustomobject]@{ Category = "ruby"; Name = "rspecf"; Description = "Re-run last-failed RSpec examples"; Usage = "rspecf [args...]"; Deps = "bundle,rspec" }
+        [pscustomobject]@{ Category = "java"; Name = "m2size"; Description = "Size of the local Maven repository cache"; Usage = "m2size"; Deps = "" }
+        [pscustomobject]@{ Category = "java"; Name = "gradlesize"; Description = "Size of the local Gradle cache"; Usage = "gradlesize"; Deps = "" }
+        [pscustomobject]@{ Category = "java"; Name = "jarinfo"; Description = "Inspect a jar manifest and contents"; Usage = "jarinfo <path-to-jar>"; Deps = "jar" }
+        [pscustomobject]@{ Category = "java"; Name = "javaver"; Description = "Fuzzy-pick and switch JAVA_HOME"; Usage = "javaver"; Deps = "fzf,jenv" }
+        [pscustomobject]@{ Category = "java"; Name = "mvntree"; Description = "Maven dependency tree"; Usage = "mvntree"; Deps = "mvn" }
+        [pscustomobject]@{ Category = "db"; Name = "pgc"; Description = "Connect to Postgres (PG* env vars)"; Usage = "pgc"; Deps = "psql" }
+        [pscustomobject]@{ Category = "db"; Name = "myc"; Description = "Connect to MySQL (MYSQL_* env vars)"; Usage = "myc"; Deps = "mysql" }
+        [pscustomobject]@{ Category = "db"; Name = "redisc"; Description = "Connect to Redis (REDIS_* env vars)"; Usage = "redisc"; Deps = "redis-cli" }
+        [pscustomobject]@{ Category = "db"; Name = "pgdump"; Description = "Dump a Postgres database to a .sql file"; Usage = "pgdump <database>"; Deps = "pg_dump" }
+        [pscustomobject]@{ Category = "db"; Name = "dbforward"; Description = "Port-forward to a picked k8s service"; Usage = "dbforward <local-port> <remote-port>"; Deps = "fzf,kubectl" }
+        [pscustomobject]@{ Category = "dev"; Name = "serve"; Description = "Serve the current directory over HTTP"; Usage = "serve [port]"; Deps = "python or npx" }
+        [pscustomobject]@{ Category = "dev"; Name = "todogrep"; Description = "Find TODO/FIXME/HACK/XXX comments"; Usage = "todogrep [dir]"; Deps = "" }
+        [pscustomobject]@{ Category = "dev"; Name = "basec"; Description = "Convert a number between bases"; Usage = "basec <number>"; Deps = "" }
+        [pscustomobject]@{ Category = "dev"; Name = "colorconv"; Description = "Convert hex color to RGB or RGB to hex"; Usage = "colorconv <#rrggbb | r g b>"; Deps = "" }
+        [pscustomobject]@{ Category = "dev"; Name = "tunnel"; Description = "Open an ngrok tunnel to a local port"; Usage = "tunnel <port>"; Deps = "ngrok" }
+        [pscustomobject]@{ Category = "dev"; Name = "bench"; Description = "Time N runs of a command"; Usage = "bench <runs> {command}"; Deps = "" }
+        [pscustomobject]@{ Category = "dev"; Name = "diffdir"; Description = "Recursively diff two directories"; Usage = "diffdir <dir-a> <dir-b>"; Deps = "" }
+        [pscustomobject]@{ Category = "dev"; Name = "openat"; Description = "Open editor at a file and line"; Usage = "openat <file>[:<line>]"; Deps = "" }
+        [pscustomobject]@{ Category = "dev"; Name = "worktree"; Description = "Fuzzy-manage git worktrees"; Usage = "worktree <add|switch|remove>"; Deps = "fzf" }
+        [pscustomobject]@{ Category = "dev"; Name = "licensegen"; Description = "Generate a LICENSE file"; Usage = "licensegen <mit|apache2> [author] [year]"; Deps = "" }
+        [pscustomobject]@{ Category = "react"; Name = "mkvite"; Description = "Scaffold a Vite+React app"; Usage = "mkvite <app-name> [template]"; Deps = "npx" }
+        [pscustomobject]@{ Category = "react"; Name = "vitedev"; Description = "Start the Vite dev server"; Usage = "vitedev"; Deps = "npm" }
+        [pscustomobject]@{ Category = "react"; Name = "vitebuild"; Description = "Production build with bundle size report"; Usage = "vitebuild"; Deps = "npm" }
+        [pscustomobject]@{ Category = "react"; Name = "viteclean"; Description = "Wipe node_modules/dist and reinstall"; Usage = "viteclean"; Deps = "npm" }
+        [pscustomobject]@{ Category = "react"; Name = "reactcomp"; Description = "Scaffold a React component"; Usage = "reactcomp <ComponentName> [dir]"; Deps = "" }
+        [pscustomobject]@{ Category = "react"; Name = "viteenv"; Description = "Copy .env.example to .env"; Usage = "viteenv"; Deps = "" }
+        [pscustomobject]@{ Category = "react"; Name = "vitelint"; Description = "ESLint + Prettier + TypeScript check"; Usage = "vitelint [--fix]"; Deps = "npm" }
+        [pscustomobject]@{ Category = "react"; Name = "mkviteapi"; Description = "Scaffold a companion API folder"; Usage = "mkviteapi [name] [--fastify]"; Deps = "" }
+        [pscustomobject]@{ Category = "cron"; Name = "cronlist"; Description = "List crontab entries"; Usage = "cronlist"; Deps = "" }
+        [pscustomobject]@{ Category = "cron"; Name = "cronadd"; Description = "Append a new cron job"; Usage = 'cronadd "<schedule>" "<command>"'; Deps = "" }
+        [pscustomobject]@{ Category = "cron"; Name = "cronrm"; Description = "Fuzzy-remove a cron job"; Usage = "cronrm"; Deps = "fzf" }
+        [pscustomobject]@{ Category = "cron"; Name = "cronedit"; Description = "Open crontab in editor"; Usage = "cronedit"; Deps = "" }
+        [pscustomobject]@{ Category = "cron"; Name = "cronhuman"; Description = "Translate cron expression to English"; Usage = 'cronhuman "<schedule>"'; Deps = "" }
+        [pscustomobject]@{ Category = "cron"; Name = "cronnext"; Description = "Show next N run times for a cron expression"; Usage = 'cronnext "<schedule>" [count]'; Deps = "python3" }
+        [pscustomobject]@{ Category = "api"; Name = "apiwatch"; Description = "Poll an endpoint and log status + time"; Usage = "apiwatch <url> [interval]"; Deps = "curl" }
+        [pscustomobject]@{ Category = "api"; Name = "apimock"; Description = "Spin up a local mock JSON API server"; Usage = "apimock <file.json> [port]"; Deps = "npx" }
+        [pscustomobject]@{ Category = "api"; Name = "apidiff"; Description = "Diff two JSON API responses"; Usage = "apidiff <a> <b>"; Deps = "jq" }
+        [pscustomobject]@{ Category = "api"; Name = "curltime"; Description = "Detailed HTTP timing breakdown"; Usage = "curltime <url>"; Deps = "curl" }
+        [pscustomobject]@{ Category = "api"; Name = "openapipp"; Description = "Validate and lint an OpenAPI spec"; Usage = "openapipp <spec-file>"; Deps = "npx" }
+        [pscustomobject]@{ Category = "env"; Name = "envgen"; Description = "Generate .env.example from .env"; Usage = "envgen [src] [out]"; Deps = "" }
+        [pscustomobject]@{ Category = "env"; Name = "envrequire"; Description = "Assert required env vars are set"; Usage = "envrequire VAR1 VAR2 ..."; Deps = "" }
+        [pscustomobject]@{ Category = "env"; Name = "envexport"; Description = "Print export statements from a .env file"; Usage = "envexport [file]"; Deps = "" }
+        [pscustomobject]@{ Category = "env"; Name = "envmask"; Description = "Print .env with secret values masked"; Usage = "envmask [file]"; Deps = "" }
+        [pscustomobject]@{ Category = "env"; Name = "envsync"; Description = "Compare .env against .env.example"; Usage = "envsync [env] [example]"; Deps = "" }
         [pscustomobject]@{ Category = "go"; Name = "covreport"; Description = "Go tests with HTML coverage report"; Usage = "covreport"; Deps = "" }
         [pscustomobject]@{ Category = "go"; Name = "gomodwhy"; Description = "Why a module is in the Go graph"; Usage = "gomodwhy <module-path>"; Deps = "" }
         [pscustomobject]@{ Category = "go"; Name = "goclean"; Description = "gofmt, vet, and mod tidy"; Usage = "goclean"; Deps = "" }
@@ -2394,7 +3453,7 @@ Usage: sharmory [list|help|run|doctor|setup|bench] [args]
   sharmory setup              Install optional CLI tools (fzf, jq, eza, tldr)
   sharmory bench [n]          Source-time benchmark (default 10 runs)
 
-Categories: files git docker k8s go node python net security system prod jenkins meta
+Categories: files git docker k8s go node python net security system prod jenkins ruby java db dev react cron api env meta
 "@
 }
 

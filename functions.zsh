@@ -25,10 +25,12 @@ unalias -- \
     gitundo branchclean branchage gitlog-today gacp gclone gwip gunwip \
     gitprune gswitch prdiff gitcontributors gitsize gitconflicts gitignore \
     gstash grebase gopen gpr gitbranch-rename gitlog-graph gcleanup \
-    grecentbranch gcamend gdiffstage \
-    dockernuke dockerclean-images dclean dockerlogs dsh dockersizes \
+    grecentbranch gcamend gdiffstage greview gstats \
+    dockernuke dockerclean-images dclean dockerlogs dsh dockersizes dimages \
+    dstats dcup dcdown dhealth dvols dports \
     k8sctx klogs kexec ktop kevents \
     denv dbuild kns kdesc kport \
+    krestart kscale kdel ksecret kcp \
     covreport gomodwhy goclean goupdate gobench gonew gowatch \
     gorace gobuild goxbuild gocover-func goenv golist goversion gotest gomod-name govscan goimpl \
     npmclean npmscripts npmoutdated npmsize \
@@ -43,10 +45,21 @@ unalias -- \
     jwtdecode dotenv-check \
     mem cpu pidtree fkill now timer \
     diskusage envdiff ports sysinfo openports \
+    cpuwatch memwatch \
     note jsonpp envload ffind cheat calc qr \
     todo mkproject epoch diffjson retry \
-    hist mktemplate envswitch \
+    hist mktemplate envswitch alias-list \
     jenk-crumb jenk-build jenk-logs jenk-jobs \
+    speed sshcopy \
+    gemclean rbver rboutdated rspecf \
+    m2size gradlesize jarinfo javaver mvntree \
+    pgc myc redisc pgdump dbforward \
+    serve todogrep basec colorconv tunnel \
+    bench diffdir openat worktree licensegen \
+    mkvite vitedev vitebuild viteclean reactcomp viteenv vitelint mkviteapi \
+    cronlist cronadd cronrm cronedit cronhuman cronnext \
+    apiwatch apimock apidiff curltime openapipp \
+    envgen envrequire envexport envmask envsync \
     sharmory-update sharmory-doctor sharmory-setup sharmory-bench sharmory \
     2>/dev/null; true
 
@@ -735,6 +748,64 @@ gdiffstage() {
     git diff --cached
 }
 
+# Open the last open pull request for the current branch on GitHub
+# Falls back to listing all open PRs if gh CLI is available, else opens the compare URL
+# Usage: greview
+greview() {
+    _sharmory_need gh || {
+        # gh not installed — fall back to opening the PR list in browser
+        gpr
+        return $?
+    }
+    local branch
+    branch=$(git branch --show-current 2>/dev/null)
+    if [[ -z "$branch" ]]; then
+        echo "Not on a branch."
+        return 1
+    fi
+    local pr_url
+    pr_url=$(gh pr view "$branch" --json url -q .url 2>/dev/null)
+    if [[ -n "$pr_url" ]]; then
+        echo "Opening PR: $pr_url"
+        if command -v open &>/dev/null; then
+            open "$pr_url"
+        elif command -v xdg-open &>/dev/null; then
+            xdg-open "$pr_url"
+        else
+            echo "$pr_url"
+        fi
+    else
+        echo "No open PR found for branch '$branch'. Opening compare URL..."
+        gpr
+    fi
+}
+
+# Show per-author commit counts and lines added/deleted for the current repo
+# Usage: gstats [--since <date>]
+gstats() {
+    local since_arg=()
+    if [[ "$1" == "--since" && -n "$2" ]]; then
+        since_arg=(--since="$2")
+    fi
+    echo "Commit counts by author:"
+    git log "${since_arg[@]}" --format='%aN' | sort | uniq -c | sort -rn | \
+        awk '{printf "  %5d  %s\n", $1, substr($0, index($0,$2))}'
+    echo ""
+    echo "Lines added / deleted by author:"
+    git log "${since_arg[@]}" --numstat --format='%aN' | \
+        awk '
+            /^[^0-9]/ { author=$0; next }
+            /^[0-9]/ {
+                added[author]   += $1
+                deleted[author] += $2
+            }
+            END {
+                for (a in added)
+                    printf "  %-30s  +%-8d  -%d\n", a, added[a], deleted[a]
+            }
+        ' | sort -t'+' -k2 -rn
+}
+
 #########################################################################
 # 3. DOCKER & KUBERNETES
 #########################################################################
@@ -791,6 +862,33 @@ dsh() {
 # Show human-readable sizes of local Docker images
 dockersizes() {
     docker images --format '{{.Repository}}:{{.Tag}}\t{{.Size}}' | sort -k2 -h
+}
+
+# Interactively pick a local Docker image via fzf; run, inspect, or remove it
+# Usage: dimages
+dimages() {
+    _sharmory_need fzf || return 1
+    local selection action image
+    selection=$(docker images --format '{{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.ID}}' \
+        | fzf --prompt="image> " \
+              --header="Enter to act on image" \
+              --preview='docker inspect {3} 2>/dev/null | head -40' \
+              --preview-window=right:50%:wrap)
+    [[ -z "$selection" ]] && return 0
+    image=$(echo "$selection" | awk '{print $1}')
+    echo "Image: $image"
+    echo "Action: (r)un shell  (i)nspect  (d)elete  [r/i/d]:"
+    read -r action
+    case "$action" in
+        r) docker run --rm -it "$image" sh ;;
+        i) docker inspect "$image" | (command -v jq &>/dev/null && jq . || cat) ;;
+        d)
+            echo -n "Delete $image? (y/N) "
+            read -r confirm
+            [[ "$confirm" == "y" ]] && docker rmi "$image" || echo "Cancelled."
+            ;;
+        *) echo "Aborted." ;;
+    esac
 }
 
 # Interactively pick a kubectl context and namespace via fzf, and switch to them
@@ -882,6 +980,869 @@ kport() {
     fi
     echo "Forwarding localhost:$1 → pod/$2:$3 (Ctrl-C to stop)"
     kubectl port-forward "pod/$2" "$1:$3"
+}
+
+# One-shot resource usage snapshot for all running containers
+dstats() {
+    docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}"
+}
+
+# Bring up docker-compose services in the background
+dcup() {
+    docker compose up -d "$@"
+}
+
+# Tear down docker-compose services
+dcdown() {
+    docker compose down "$@"
+}
+
+# Show health status of all containers that define a healthcheck
+dhealth() {
+    docker ps --format '{{.Names}}' | while read -r c; do
+        local hstatus
+        hstatus=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$c")
+        printf "%-30s %s\n" "$c" "$hstatus"
+    done
+}
+
+# Human-readable sizes of local Docker volumes
+dvols() {
+    docker system df -v --format '{{.Name}}\t{{.Size}}' 2>/dev/null || docker volume ls -q | while read -r v; do
+        printf "%-30s %s\n" "$v" "$(docker volume inspect "$v" --format '{{.Mountpoint}}' | xargs du -sh 2>/dev/null | cut -f1)"
+    done
+}
+
+# Show published port mappings for all running containers
+dports() {
+    docker ps --format 'table {{.Names}}\t{{.Ports}}'
+}
+
+# Rollout-restart a picked deployment
+krestart() {
+    _sharmory_need fzf || return 1
+    local dep
+    dep=$(kubectl get deployments -o name | fzf --prompt="deployment> " | sed 's|deployment.apps/||')
+    [ -z "$dep" ] && return 0
+    kubectl rollout restart "deployment/$dep"
+    kubectl rollout status "deployment/$dep"
+}
+
+# Scale a picked deployment to a given replica count
+# Usage: kscale <replicas>
+kscale() {
+    if [ -z "$1" ]; then
+        echo "Usage: kscale <replicas>"
+        return 1
+    fi
+    _sharmory_need fzf || return 1
+    local dep
+    dep=$(kubectl get deployments -o name | fzf --prompt="deployment> " | sed 's|deployment.apps/||')
+    [ -z "$dep" ] && return 0
+    kubectl scale "deployment/$dep" --replicas="$1"
+}
+
+# Force-delete a picked (possibly stuck) pod
+kdel() {
+    _sharmory_need fzf || return 1
+    local pod
+    pod=$(kubectl get pods -o name | fzf --prompt="pod to delete> " | sed 's|pod/||')
+    [ -z "$pod" ] && return 0
+    kubectl delete pod "$pod" --grace-period=0 --force
+}
+
+# Decode and print the data of a picked secret
+ksecret() {
+    _sharmory_need fzf || return 1
+    local sec
+    sec=$(kubectl get secrets -o name | fzf --prompt="secret> " | sed 's|secret/||')
+    [ -z "$sec" ] && return 0
+    kubectl get secret "$sec" -o json | \
+        python3 -c "import sys,json,base64; d=json.load(sys.stdin)['data']; [print(f'{k}: {base64.b64decode(v).decode(errors=\"replace\")}') for k,v in d.items()]" 2>/dev/null || \
+        kubectl get secret "$sec" -o jsonpath='{.data}'
+}
+
+# Copy a file to/from a picked pod
+# Usage: kcp <local-path> <pod-relative-path>
+#        kcp --pull <pod-relative-path> <local-path>
+kcp() {
+    if [ -z "$1" ] || [ -z "$2" ]; then
+        echo "Usage: kcp <local-path> <pod-relative-path>"
+        echo "       kcp --pull <pod-relative-path> <local-path>"
+        return 1
+    fi
+    _sharmory_need fzf || return 1
+    local pod
+    pod=$(kubectl get pods -o name | fzf --prompt="pod> " | sed 's|pod/||')
+    [ -z "$pod" ] && return 0
+    if [ "$1" = "--pull" ]; then
+        kubectl cp "$pod:$2" "$3"
+    else
+        kubectl cp "$1" "$pod:$2"
+    fi
+}
+
+#########################################################################
+# 12b. RUBY
+#########################################################################
+
+# Uninstall old/duplicate gem versions, keeping only the latest of each
+gemclean() {
+    gem cleanup
+}
+
+# Fuzzy-pick and switch the active Ruby version (rbenv/rvm/asdf aware)
+rbver() {
+    _sharmory_need fzf || return 1
+    if command -v rbenv >/dev/null 2>&1; then
+        local v
+        v=$(rbenv versions --bare | fzf --prompt="ruby version> ")
+        [ -z "$v" ] && return 0
+        rbenv local "$v"
+    elif command -v rvm >/dev/null 2>&1; then
+        local v
+        v=$(rvm list strings | fzf --prompt="ruby version> ")
+        [ -z "$v" ] && return 0
+        rvm use "$v"
+    else
+        echo "No rbenv or rvm found"
+        return 1
+    fi
+}
+
+# List outdated gems from the current Gemfile.lock
+rboutdated() {
+    bundle outdated
+}
+
+# Re-run only the last-failed RSpec examples
+rspecf() {
+    bundle exec rspec --only-failures "$@"
+}
+
+#########################################################################
+# 12c. JAVA
+#########################################################################
+
+# Report size of the local Maven repository cache
+m2size() {
+    local p="${HOME}/.m2/repository"
+    [ -d "$p" ] || { echo "~/.m2/repository not found"; return 0; }
+    du -sh "$p" 2>/dev/null
+}
+
+# Report size of the local Gradle cache
+gradlesize() {
+    local p="${HOME}/.gradle/caches"
+    [ -d "$p" ] || { echo "~/.gradle/caches not found"; return 0; }
+    du -sh "$p" 2>/dev/null
+}
+
+# Inspect a jar's manifest and top-level contents
+# Usage: jarinfo <path-to-jar>
+jarinfo() {
+    if [ -z "$1" ]; then
+        echo "Usage: jarinfo <path-to-jar>"
+        return 1
+    fi
+    echo "--- Manifest ---"
+    unzip -p "$1" META-INF/MANIFEST.MF 2>/dev/null
+    echo "--- Contents ---"
+    unzip -l "$1"
+}
+
+# Fuzzy-pick and switch JAVA_HOME (jenv/sdkman aware)
+javaver() {
+    _sharmory_need fzf || return 1
+    if command -v jenv >/dev/null 2>&1; then
+        local v
+        v=$(jenv versions --bare | fzf --prompt="java version> ")
+        [ -z "$v" ] && return 0
+        jenv local "$v"
+    elif [ -d "$HOME/.sdkman/candidates/java" ]; then
+        local v
+        v=$(ls "$HOME/.sdkman/candidates/java" | fzf --prompt="java version> ")
+        [ -z "$v" ] && return 0
+        export JAVA_HOME="$HOME/.sdkman/candidates/java/$v"
+        echo "JAVA_HOME set to $JAVA_HOME"
+    else
+        echo "No jenv or sdkman found"
+        return 1
+    fi
+}
+
+# Print the Maven dependency tree for the current project
+mvntree() {
+    mvn dependency:tree
+}
+
+#########################################################################
+# 12d. DATABASE
+#########################################################################
+
+# Connect to Postgres using PG* env vars (or defaults)
+pgc() {
+    local host="${PGHOST:-localhost}" port="${PGPORT:-5432}" db="${PGDATABASE:-postgres}" user="${PGUSER:-postgres}"
+    psql -h "$host" -p "$port" -U "$user" -d "$db"
+}
+
+# Connect to MySQL using MYSQL_* env vars (or defaults)
+myc() {
+    local host="${MYSQL_HOST:-localhost}" port="${MYSQL_PORT:-3306}" user="${MYSQL_USER:-root}" db="${MYSQL_DATABASE}"
+    mysql -h "$host" -P "$port" -u "$user" -p "$db"
+}
+
+# Connect to Redis using REDIS_* env vars
+redisc() {
+    local host="${REDIS_HOST:-localhost}" port="${REDIS_PORT:-6379}"
+    redis-cli -h "$host" -p "$port"
+}
+
+# Dump the current Postgres database to a timestamped .sql file
+# Usage: pgdump <database>
+pgdump() {
+    local db="${1:-$PGDATABASE}"
+    if [ -z "$db" ]; then
+        echo "Usage: pgdump <database>"
+        return 1
+    fi
+    local file="${db}_$(date +%Y%m%d_%H%M%S).sql"
+    pg_dump "$db" > "$file"
+    echo "Dumped to $file"
+}
+
+# Port-forward to a picked k8s service and print a ready-to-use connect hint
+# Usage: dbforward <local-port> <remote-port>
+dbforward() {
+    if [ -z "$1" ] || [ -z "$2" ]; then
+        echo "Usage: dbforward <local-port> <remote-port>"
+        return 1
+    fi
+    _sharmory_need fzf || return 1
+    _sharmory_need kubectl || return 1
+    local svc
+    svc=$(kubectl get svc -o name | fzf --prompt="service> " | sed 's|service/||')
+    [ -z "$svc" ] && return 0
+    echo "Forwarding localhost:$1 -> svc/$svc:$2 (Ctrl-C to stop)"
+    kubectl port-forward "svc/$svc" "$1:$2"
+}
+
+#########################################################################
+# 12e. GENERAL DEV
+#########################################################################
+
+# Serve the current directory over HTTP
+# Usage: serve [port]
+serve() {
+    local port="${1:-8000}"
+    if command -v python3 >/dev/null 2>&1; then
+        echo "Serving $(pwd) on http://localhost:$port"
+        python3 -m http.server "$port"
+    else
+        npx --yes serve -l "$port" .
+    fi
+}
+
+# Find TODO/FIXME/HACK/XXX comments across the codebase
+# Usage: todogrep [dir]
+todogrep() {
+    local dir="${1:-.}"
+    grep -rn --color=always -E "(TODO|FIXME|HACK|XXX)" "$dir" \
+        --exclude-dir={.git,node_modules,vendor,.venv,dist,build}
+}
+
+# Convert a number between hex, decimal, octal, and binary
+# Usage: basec <number>
+basec() {
+    if [ -z "$1" ]; then
+        echo "Usage: basec <number>"
+        return 1
+    fi
+    local n="$1" dec
+    if [[ "$n" == 0x* || "$n" == 0X* ]]; then
+        dec=$(( 16#${n#0x} ))
+    elif [[ "$n" == 0b* || "$n" == 0B* ]]; then
+        dec=$(( 2#${n#0b} ))
+    elif [[ "$n" == 0o* || "$n" == 0O* ]]; then
+        dec=$(( 8#${n#0o} ))
+    else
+        dec=$(( 10#$n ))
+    fi
+    printf "Dec: %d\nHex: 0x%x\nOct: 0o%o\nBin: " "$dec" "$dec" "$dec"
+    echo "obase=2;$dec" | bc
+}
+
+# Convert a hex color to RGB (or RGB to hex)
+# Usage: colorconv <#rrggbb>  |  colorconv <r> <g> <b>
+colorconv() {
+    if [ -z "$1" ]; then
+        echo "Usage: colorconv <#rrggbb>  |  colorconv <r> <g> <b>"
+        return 1
+    fi
+    if [[ "$1" == \#* ]]; then
+        local hex="${1#\#}"
+        printf "RGB: %d, %d, %d\n" "0x${hex:0:2}" "0x${hex:2:2}" "0x${hex:4:2}"
+    else
+        printf "Hex: #%02x%02x%02x\n" "$1" "$2" "$3"
+    fi
+}
+
+# Open a quick ngrok tunnel to a local port
+# Usage: tunnel <port>
+tunnel() {
+    if [ -z "$1" ]; then
+        echo "Usage: tunnel <port>"
+        return 1
+    fi
+    _sharmory_need ngrok || return 1
+    ngrok http "$1"
+}
+
+# Time N runs of a command and report min/max/avg
+# Usage: bench <runs> <command...>
+bench() {
+    if [ -z "$1" ] || [ -z "$2" ]; then
+        echo "Usage: bench <runs> <command...>"
+        return 1
+    fi
+    local runs="$1"; shift
+    local i elapsed total=0 min="" max=""
+    for (( i = 1; i <= runs; i++ )); do
+        local start end
+        start=$(date +%s%N)
+        "$@" >/dev/null 2>&1
+        end=$(date +%s%N)
+        elapsed=$(echo "scale=3; ($end - $start) / 1000000000" | bc)
+        total=$(echo "$total + $elapsed" | bc)
+        [ -z "$min" ] && min="$elapsed"
+        [ -z "$max" ] && max="$elapsed"
+        (( $(echo "$elapsed < $min" | bc -l) )) && min="$elapsed"
+        (( $(echo "$elapsed > $max" | bc -l) )) && max="$elapsed"
+        printf "Run %d: %.3fs\n" "$i" "$elapsed"
+    done
+    printf "\navg: %.3fs  min: %.3fs  max: %.3fs\n" \
+        "$(echo "scale=3; $total / $runs" | bc)" "$min" "$max"
+}
+
+# Recursively diff two directories, summarizing added/removed/changed files
+# Usage: diffdir <dir-a> <dir-b>
+diffdir() {
+    if [ -z "$1" ] || [ -z "$2" ]; then
+        echo "Usage: diffdir <dir-a> <dir-b>"
+        return 1
+    fi
+    diff -rq "$1" "$2"
+}
+
+# Open $EDITOR at a specific file and line
+# Usage: openat <file>:<line>  |  openat <file> <line>
+openat() {
+    if [ -z "$1" ]; then
+        echo "Usage: openat <file>[:<line>]  |  openat <file> <line>"
+        return 1
+    fi
+    local file line
+    if [[ "$1" == *:* ]]; then
+        file="${1%%:*}"
+        line="${1##*:}"
+    else
+        file="$1"
+        line="${2:-1}"
+    fi
+    "${EDITOR:-vi}" "+$line" "$file"
+}
+
+# Fuzzy-manage git worktrees: add, switch, or remove
+# Usage: worktree add <branch> [path]  |  worktree switch  |  worktree remove
+worktree() {
+    case "$1" in
+        add)
+            [ -z "$2" ] && { echo "Usage: worktree add <branch> [path]"; return 1; }
+            local path="${3:-../$2}"
+            git worktree add "$path" "$2"
+            ;;
+        switch)
+            _sharmory_need fzf || return 1
+            local wt
+            wt=$(git worktree list | fzf --prompt="worktree> " | awk '{print $1}')
+            [ -z "$wt" ] && return 0
+            cd "$wt" || return 1
+            ;;
+        remove)
+            _sharmory_need fzf || return 1
+            local wt
+            wt=$(git worktree list | fzf --prompt="remove worktree> " | awk '{print $1}')
+            [ -z "$wt" ] && return 0
+            git worktree remove "$wt"
+            ;;
+        *)
+            echo "Usage: worktree <add|switch|remove> [args...]"
+            return 1
+            ;;
+    esac
+}
+
+# Generate a LICENSE file in the current directory
+# Usage: licensegen <mit|apache2> [author] [year]
+licensegen() {
+    local kind="${1:-mit}"
+    local author="${2:-$(git config user.name 2>/dev/null || echo 'Your Name')}"
+    local year="${3:-$(date +%Y)}"
+    case "$kind" in
+        mit)
+            printf "MIT License\n\nCopyright (c) %s %s\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n" "$year" "$author" > LICENSE
+            ;;
+        apache2)
+            printf "Apache License 2.0\n\nCopyright %s %s\n\nLicensed under the Apache License, Version 2.0 (the \"License\"); you may not use this file except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0\n" "$year" "$author" > LICENSE
+            ;;
+        *)
+            echo "Usage: licensegen <mit|apache2> [author] [year]"
+            return 1
+            ;;
+    esac
+    echo "LICENSE ($kind) written for $author, $year"
+}
+
+#########################################################################
+# 12f. REACT / VITE
+#########################################################################
+
+# Scaffold a new Vite + React app, strip boilerplate, install deps, git init
+# Usage: mkvite <app-name> [template]
+mkvite() {
+    if [ -z "$1" ]; then
+        echo "Usage: mkvite <app-name> [template]"
+        echo "Templates: react, react-ts, react-swc, react-swc-ts"
+        return 1
+    fi
+    local name="$1" template="${2:-react-ts}"
+    echo "Scaffolding $name (template: $template)..."
+    npx --yes create-vite@latest "$name" --template "$template" || return 1
+    cd "$name" || return 1
+    rm -f src/assets/react.svg public/vite.svg 2>/dev/null
+    if [ -f src/App.css ]; then : > src/App.css; fi
+    if [ -f src/index.css ]; then
+        cat > src/index.css <<'CSEOF'
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+}
+CSEOF
+    fi
+    echo "Installing dependencies..."
+    npm install
+    if [ ! -d .git ]; then
+        git init -q
+        git add -A
+        git commit -q -m "chore: scaffold $name with Vite"
+    fi
+    echo "Done. cd $name is active. Run 'npm run dev' to start."
+}
+
+# Start the Vite dev server and open the browser
+vitedev() {
+    npm run dev -- --open
+}
+
+# Production build, then report the dist/ bundle size breakdown
+vitebuild() {
+    npm run build || return 1
+    echo ""
+    echo "--- Bundle sizes ---"
+    du -sh dist/assets/* 2>/dev/null | sort -rh
+    echo ""
+    du -sh dist | awk '{print "Total: " $1}'
+}
+
+# Wipe node_modules + lockfile + dist, reinstall clean
+viteclean() {
+    echo "Removing node_modules, dist, and lockfile..."
+    rm -rf node_modules dist package-lock.json
+    npm install
+}
+
+# Scaffold a new React component with boilerplate (TS-aware)
+# Usage: reactcomp <ComponentName> [dir]
+reactcomp() {
+    if [ -z "$1" ]; then
+        echo "Usage: reactcomp <ComponentName> [dir]"
+        return 1
+    fi
+    local name="$1" dir="${2:-src/components}" ext="jsx"
+    [ -f "tsconfig.json" ] && ext="tsx"
+    mkdir -p "$dir/$name"
+    cat > "$dir/$name/$name.$ext" <<EOF
+export function $name() {
+  return (
+    <div className="$name">
+      $name
+    </div>
+  );
+}
+EOF
+    local iext="js"
+    [ "$ext" = "tsx" ] && iext="ts"
+    echo "export { $name } from './$name';" > "$dir/$name/index.$iext"
+    echo "Created $dir/$name/$name.$ext"
+}
+
+# Copy .env.example to .env if .env doesn't already exist
+viteenv() {
+    if [ -f .env ]; then
+        echo ".env already exists, not overwriting"
+        return 0
+    fi
+    if [ -f .env.example ]; then
+        cp .env.example .env
+        echo "Created .env from .env.example"
+    else
+        echo "No .env.example found"
+        return 1
+    fi
+}
+
+# Run ESLint + Prettier check + TypeScript typecheck in one pass (pre-push gate)
+# Usage: vitelint [--fix]
+vitelint() {
+    local fix=""
+    [ "$1" = "--fix" ] && fix="--fix"
+    local ok=1
+    echo "==> ESLint..."
+    if command -v eslint &>/dev/null; then
+        eslint $fix . || ok=0
+    else
+        npm run lint ${fix:+-- --fix} 2>/dev/null || ok=0
+    fi
+    echo "==> Prettier..."
+    if command -v prettier &>/dev/null; then
+        if [ -n "$fix" ]; then
+            prettier --write . || ok=0
+        else
+            prettier --check . || ok=0
+        fi
+    else
+        echo "  prettier not found — skipping"
+    fi
+    echo "==> TypeScript..."
+    if [ -f tsconfig.json ]; then
+        npx --no-install tsc --noEmit 2>/dev/null || npm exec -- tsc --noEmit || ok=0
+    else
+        echo "  No tsconfig.json — skipping tsc"
+    fi
+    if [ "$ok" -eq 1 ]; then
+        echo "✔  vitelint passed"
+    else
+        echo "✖  vitelint found issues"
+        return 1
+    fi
+}
+
+# Scaffold a companion API folder (Express by default) alongside a Vite frontend
+# Usage: mkviteapi [name] [--fastify]
+mkviteapi() {
+    local name="${1:-api}" framework="express"
+    [ "$2" = "--fastify" ] && framework="fastify"
+    if [ -d "$name" ]; then
+        echo "Directory '$name' already exists"
+        return 1
+    fi
+    mkdir -p "$name/src"
+    cat > "$name/package.json" <<EOF
+{
+  "name": "$name",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "$framework": "latest"
+  }
+}
+EOF
+    if [ "$framework" = "fastify" ]; then
+        cat > "$name/src/index.js" <<'JSEOF'
+import Fastify from 'fastify'
+const app = Fastify({ logger: true })
+
+app.get('/health', async () => ({ status: 'ok' }))
+
+app.listen({ port: 3001, host: '0.0.0.0' })
+JSEOF
+    else
+        cat > "$name/src/index.js" <<'JSEOF'
+import express from 'express'
+const app = express()
+app.use(express.json())
+
+app.get('/health', (_req, res) => res.json({ status: 'ok' }))
+
+app.listen(3001, () => console.log('API listening on :3001'))
+JSEOF
+    fi
+    cat > "$name/.env.example" <<'EOF'
+PORT=3001
+EOF
+    echo "Scaffolded $framework API in ./$name/"
+    echo "  cd $name && npm install && npm run dev"
+}
+
+#########################################################################
+# 12g. CRON
+#########################################################################
+
+# List the current user's crontab, aligned and numbered for reference
+cronlist() {
+    if ! crontab -l >/dev/null 2>&1; then
+        echo "No crontab for $(whoami)"
+        return 0
+    fi
+    crontab -l | grep -v '^\s*#' | grep -v '^\s*$' | nl -ba -w2 -s'  '
+}
+
+# Append a new cron job
+# Usage: cronadd "<schedule>" "<command>"
+cronadd() {
+    if [ -z "$1" ] || [ -z "$2" ]; then
+        echo 'Usage: cronadd "<schedule>" "<command>"'
+        echo 'Example: cronadd "0 3 * * *" "/home/user/scripts/backup.sh"'
+        return 1
+    fi
+    (crontab -l 2>/dev/null; echo "$1 $2") | crontab -
+    echo "Added: $1 $2"
+}
+
+# Fuzzy-pick and remove a line from the crontab
+cronrm() {
+    _sharmory_need fzf || return 1
+    if ! crontab -l >/dev/null 2>&1; then
+        echo "No crontab for $(whoami)"
+        return 0
+    fi
+    local line
+    line=$(crontab -l | grep -v '^\s*#' | grep -v '^\s*$' | fzf --prompt="remove cron job> ")
+    [ -z "$line" ] && return 0
+    crontab -l | grep -vF "$line" | crontab -
+    echo "Removed: $line"
+}
+
+# Open the crontab in $EDITOR (thin wrapper around crontab -e)
+cronedit() {
+    EDITOR="${EDITOR:-vi}" crontab -e
+}
+
+# Translate a 5-field cron expression into a plain-English description
+# Usage: cronhuman "<min> <hour> <dom> <month> <dow>"
+cronhuman() {
+    if [ -z "$1" ]; then
+        echo 'Usage: cronhuman "<min> <hour> <dom> <month> <dow>"'
+        return 1
+    fi
+    read -r min hour dom month dow <<< "$1"
+    local desc=""
+    local -a days=(Sun Mon Tue Wed Thu Fri Sat)
+
+    if [ "$min" = "*" ] && [ "$hour" = "*" ]; then
+        desc="every minute"
+    elif [[ "$min" == */* ]] && [ "$hour" = "*" ]; then
+        desc="every ${min#*/} minutes"
+    elif [ "$hour" = "*" ]; then
+        desc="at minute $min of every hour"
+    elif [[ "$hour" == */* ]]; then
+        desc="at minute $min, every ${hour#*/} hours"
+    else
+        local hh mm
+        printf -v hh "%02d" "$hour"
+        printf -v mm "%02d" "$min"
+        desc="at $hh:$mm"
+    fi
+
+    [ "$dom" != "*" ] && desc="$desc, on day $dom of the month"
+    [ "$month" != "*" ] && desc="$desc, in month $month"
+    if [ "$dow" != "*" ]; then
+        local idx=$(( dow + 1 ))
+        desc="$desc, on ${days[$idx]:-day $dow}"
+    fi
+
+    echo "$1  →  $desc"
+}
+
+# Show the next N run times for a cron expression (requires python3 + croniter)
+# Usage: cronnext "<schedule>" [count]
+cronnext() {
+    if [ -z "$1" ]; then
+        echo 'Usage: cronnext "<schedule>" [count]'
+        return 1
+    fi
+    local expr="$1" count="${2:-5}"
+    python3 -c "
+from croniter import croniter
+from datetime import datetime
+it = croniter('$expr', datetime.now())
+for _ in range($count):
+    print(it.get_next(datetime))
+" 2>/dev/null || echo "Requires python3 with 'croniter' installed (pip install croniter)"
+}
+
+#########################################################################
+# 12h. API TOOLS
+#########################################################################
+
+# Poll an endpoint repeatedly, showing status code and response time each hit
+# Usage: apiwatch <url> [interval-seconds]
+apiwatch() {
+    if [ -z "$1" ]; then
+        echo "Usage: apiwatch <url> [interval-seconds]"
+        return 1
+    fi
+    local url="$1" interval="${2:-2}"
+    while true; do
+        local result
+        result=$(curl -s -o /dev/null -w "%{http_code} %{time_total}s" "$url")
+        printf "[%s] %s\n" "$(date +%H:%M:%S)" "$result"
+        sleep "$interval"
+    done
+}
+
+# Spin up a tiny local mock JSON API server from a file
+# Usage: apimock <file.json> [port]
+apimock() {
+    if [ -z "$1" ]; then
+        echo "Usage: apimock <file.json> [port]"
+        return 1
+    fi
+    _sharmory_need npx || return 1
+    local port="${2:-3001}"
+    echo "Serving mock API from $1 on http://localhost:$port"
+    npx --yes json-server --watch "$1" --port "$port"
+}
+
+# Diff two JSON API responses (from URLs or files)
+# Usage: apidiff <url-or-file-a> <url-or-file-b>
+apidiff() {
+    if [ -z "$1" ] || [ -z "$2" ]; then
+        echo "Usage: apidiff <url-or-file-a> <url-or-file-b>"
+        return 1
+    fi
+    _sharmory_need jq || return 1
+    local a b
+    a=$([ -f "$1" ] && cat "$1" || curl -s "$1")
+    b=$([ -f "$2" ] && cat "$2" || curl -s "$2")
+    diff <(echo "$a" | jq -S .) <(echo "$b" | jq -S .)
+}
+
+# Detailed curl timing breakdown: DNS, connect, TLS, TTFB, total
+# Usage: curltime <url>
+curltime() {
+    if [ -z "$1" ]; then
+        echo "Usage: curltime <url>"
+        return 1
+    fi
+    curl -s -o /dev/null -w "\
+DNS lookup:    %{time_namelookup}s
+TCP connect:   %{time_connect}s
+TLS handshake: %{time_appconnect}s
+Time to first byte: %{time_starttransfer}s
+Total:         %{time_total}s
+HTTP status:   %{http_code}\n" "$1"
+}
+
+# Validate and pretty-print an OpenAPI/Swagger spec
+# Usage: openapipp <spec-file.json|yaml>
+openapipp() {
+    if [ -z "$1" ]; then
+        echo "Usage: openapipp <spec-file>"
+        return 1
+    fi
+    _sharmory_need npx || return 1
+    npx --yes @redocly/cli lint "$1"
+}
+
+#########################################################################
+# 12i. ENV TOOLS
+#########################################################################
+
+# Generate a .env.example from a real .env, stripping values but keeping keys
+# Usage: envgen [source-file] [output-file]
+envgen() {
+    local src="${1:-.env}" out="${2:-.env.example}"
+    if [ ! -f "$src" ]; then
+        echo "No $src found"
+        return 1
+    fi
+    grep -v '^\s*#' "$src" | grep -v '^\s*$' | sed 's/=.*/=/' > "$out"
+    echo "Wrote $out from $src"
+}
+
+# Verify a list of required env vars are set; exits non-zero and lists missing ones
+# Usage: envrequire VAR1 VAR2 VAR3...
+envrequire() {
+    if [ -z "$1" ]; then
+        echo "Usage: envrequire VAR1 VAR2 ..."
+        return 1
+    fi
+    local missing=()
+    for var in "$@"; do
+        [ -z "${(P)var}" ] && missing+=("$var")
+    done
+    if [ ${#missing[@]} -eq 0 ]; then
+        echo "All required env vars are set"
+        return 0
+    else
+        echo "Missing: ${missing[*]}"
+        return 1
+    fi
+}
+
+# Print export statements for a .env file (for copy-paste into a remote shell)
+# Usage: envexport [file]
+envexport() {
+    local file="${1:-.env}"
+    if [ ! -f "$file" ]; then
+        echo "No $file found"
+        return 1
+    fi
+    grep -v '^\s*#' "$file" | grep -v '^\s*$' | while IFS='=' read -r key val; do
+        echo "export $key='$val'"
+    done
+}
+
+# Print a .env file with likely secret values masked
+# Usage: envmask [file]
+envmask() {
+    local file="${1:-.env}"
+    if [ ! -f "$file" ]; then
+        echo "No $file found"
+        return 1
+    fi
+    grep -v '^\s*#' "$file" | grep -v '^\s*$' | while IFS='=' read -r key val; do
+        if echo "$key" | grep -qiE 'key|secret|token|password|pass|auth|credential'; then
+            printf "%s=%s\n" "$key" "${val:0:2}****${val: -2}"
+        else
+            printf "%s=%s\n" "$key" "$val"
+        fi
+    done
+}
+
+# Compare .env against .env.example and report missing/extra keys
+# Usage: envsync [env-file] [example-file]
+envsync() {
+    local env="${1:-.env}" example="${2:-.env.example}"
+    if [ ! -f "$env" ] || [ ! -f "$example" ]; then
+        echo "Need both $env and $example to exist"
+        return 1
+    fi
+    local env_keys example_keys
+    env_keys=$(grep -v '^\s*#' "$env" | grep -v '^\s*$' | cut -d= -f1 | sort)
+    example_keys=$(grep -v '^\s*#' "$example" | grep -v '^\s*$' | cut -d= -f1 | sort)
+    echo "--- In $example but missing from $env ---"
+    comm -23 <(echo "$example_keys") <(echo "$env_keys")
+    echo "--- In $env but not in $example ---"
+    comm -13 <(echo "$example_keys") <(echo "$env_keys")
 }
 
 #########################################################################
@@ -2018,6 +2979,84 @@ sysinfo() {
     df -h 2>/dev/null | awk 'NR==1 || /\/$/ || /home/ {printf "    %s\n", $0}'
 }
 
+# Live CPU load monitor — refreshes every second until Ctrl-C
+# Usage: cpuwatch [interval-seconds]
+cpuwatch() {
+    local interval=${1:-1}
+    local os
+    os=$(_sharmory_os)
+    echo "CPU load monitor (Ctrl-C to stop) — refresh every ${interval}s"
+    echo ""
+    while true; do
+        if [[ "$os" == "macos" ]]; then
+            local load
+            load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2, $3, $4}')
+            local cpu_pct
+            cpu_pct=$(top -l 2 -n 0 | grep "CPU usage" | tail -1 | \
+                awk '{printf "%.0f", $3+$5}' 2>/dev/null)
+            printf "\r  Load avg: %-20s  CPU busy: %s%%   " "$load" "${cpu_pct:-?}"
+        else
+            local load
+            load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
+            local cpu_idle
+            cpu_idle=$(top -bn2 | grep '%Cpu' | tail -1 | \
+                awk '{for(i=1;i<=NF;i++) if($i~/id,/) print $(i-1)}' 2>/dev/null)
+            local cpu_pct
+            if [[ -n "$cpu_idle" ]]; then
+                cpu_pct=$(awk -v idle="$cpu_idle" 'BEGIN {printf "%.0f", 100-idle}')
+            else
+                cpu_pct="?"
+            fi
+            printf "\r  Load avg: %-20s  CPU busy: %s%%   " "$load" "$cpu_pct"
+        fi
+        sleep "$interval"
+    done
+}
+
+# Live memory usage monitor — refreshes every second until Ctrl-C
+# Usage: memwatch [interval-seconds]
+memwatch() {
+    local interval=${1:-1}
+    local os
+    os=$(_sharmory_os)
+    echo "Memory monitor (Ctrl-C to stop) — refresh every ${interval}s"
+    echo ""
+    while true; do
+        if [[ "$os" == "macos" ]]; then
+            local mem_pressure
+            mem_pressure=$(memory_pressure 2>/dev/null | grep "System memory pressure" | \
+                awk '{print $NF}' || echo "?")
+            local stats
+            stats=$(vm_stat 2>/dev/null | awk '
+                /Pages free/       { free=$3 }
+                /Pages active/     { active=$3 }
+                /Pages inactive/   { inactive=$3 }
+                /Pages wired down/ { wired=$4 }
+                END {
+                    page=4096
+                    total=(free+active+inactive+wired)*page
+                    used=(active+wired)*page
+                    printf "used %.1f GB / total %.1f GB", used/1073741824, total/1073741824
+                }
+            ')
+            printf "\r  %-45s  pressure: %s   " "$stats" "$mem_pressure"
+        else
+            local mem_info
+            mem_info=$(awk '
+                /MemTotal/     { total=$2 }
+                /MemAvailable/ { avail=$2 }
+                END {
+                    used=total-avail
+                    printf "used %d MB / total %d MB (%.0f%%)",
+                        used/1024, total/1024, (used/total)*100
+                }
+            ' /proc/meminfo 2>/dev/null)
+            printf "\r  %-50s   " "$mem_info"
+        fi
+        sleep "$interval"
+    done
+}
+
 #########################################################################
 # 10. PRODUCTIVITY & MISC
 #########################################################################
@@ -2439,6 +3478,109 @@ openports() {
     fi
 }
 
+# Run a quick internet speed test via speedtest-cli, fast-cli, or curl fallback
+# Usage: speed
+speed() {
+    if command -v speedtest-cli &>/dev/null; then
+        speedtest-cli --simple
+    elif command -v speedtest &>/dev/null; then
+        speedtest
+    elif command -v fast &>/dev/null; then
+        fast
+    else
+        echo "No speed test tool found."
+        echo "Install one of:"
+        echo "  pip install speedtest-cli   → speedtest-cli"
+        echo "  npm install -g fast-cli     → fast"
+        echo "  brew install speedtest-cli  → speedtest-cli"
+        echo ""
+        echo "Falling back to a rough curl download benchmark..."
+        local url="https://speed.cloudflare.com/__down?bytes=10000000"
+        local start end elapsed
+        start=$(date +%s%N 2>/dev/null || python3 -c 'import time; print(int(time.time()*1e9))')
+        curl -fsSL -o /dev/null "$url" 2>/dev/null
+        end=$(date +%s%N 2>/dev/null || python3 -c 'import time; print(int(time.time()*1e9))')
+        elapsed=$(( (end - start) / 1000000 ))
+        if (( elapsed > 0 )); then
+            printf "Download ~10 MB in %d ms → ~%.1f Mbps (rough estimate)\n" \
+                "$elapsed" "$(awk -v e="$elapsed" 'BEGIN {printf "%.1f", (10*8*1000)/e}')"
+        else
+            echo "Could not measure speed."
+        fi
+    fi
+}
+
+# Copy your SSH public key to a remote host's authorized_keys
+# Usage: sshcopy <user@host> [identity-file]
+sshcopy() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: sshcopy <user@host> [identity-file]"
+        return 1
+    fi
+    local target=$1
+    local identity=${2:-}
+    if command -v ssh-copy-id &>/dev/null; then
+        if [[ -n "$identity" ]]; then
+            ssh-copy-id -i "$identity" "$target"
+        else
+            ssh-copy-id "$target"
+        fi
+        return $?
+    fi
+    # Fallback: manual pipe when ssh-copy-id is not available
+    local pubkey_file
+    if [[ -n "$identity" ]]; then
+        pubkey_file="${identity%.pub}.pub"
+        [[ ! -f "$pubkey_file" ]] && pubkey_file="$identity"
+    else
+        pubkey_file=$(ls ~/.ssh/*.pub 2>/dev/null | head -1)
+    fi
+    if [[ -z "$pubkey_file" || ! -f "$pubkey_file" ]]; then
+        echo "No public key found. Generate one with: genssh <name>"
+        return 1
+    fi
+    echo "Copying $pubkey_file to $target..."
+    cat "$pubkey_file" | ssh "$target" \
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+    echo "Key copied. Try: ssh $target"
+}
+
+# List user-defined aliases in a clean, aligned table
+# Usage: alias-list [pattern]
+alias-list() {
+    local pattern=${1:-}
+    local -a entries
+    local name value
+    while IFS= read -r line; do
+        # Zsh alias output: name=value or name='value'
+        name=${line%%=*}
+        value=${line#*=}
+        value=${value#\'}; value=${value%\'}
+        value=${value#\"}; value=${value%\"}
+        entries+=("$name|$value")
+    done < <(alias 2>/dev/null | grep -v '^_' | sort)
+
+    if [[ ${#entries[@]} -eq 0 ]]; then
+        echo "No aliases defined."
+        return 0
+    fi
+
+    local max_len=0
+    for entry in "${entries[@]}"; do
+        local n=${entry%%|*}
+        [[ ${#n} -gt $max_len ]] && max_len=${#n}
+    done
+
+    printf "  %-*s  %s\n" "$max_len" "ALIAS" "COMMAND"
+    printf "  %-*s  %s\n" "$max_len" "$(printf '%*s' "$max_len" '' | tr ' ' '-')" "-------"
+    for entry in "${entries[@]}"; do
+        name=${entry%%|*}
+        value=${entry#*|}
+        [[ -n "$pattern" && "$name" != *"$pattern"* && "$value" != *"$pattern"* ]] && continue
+        printf "  %-*s  %s\n" "$max_len" "$name" "$value"
+    done
+}
+
 #########################################################################
 # 11. CI / JENKINS
 # (requires JENKINS_URL, JENKINS_USER, JENKINS_TOKEN env vars to be set)
@@ -2567,14 +3709,23 @@ _SHARMORY_REGISTRY=(
     'git^grecentbranch^Recently checked-out branches from reflog^grecentbranch [n]^'
     'git^gcamend^Amend last commit message without touching stage^gcamend <new message>^'
     'git^gdiffstage^Show what is currently staged^gdiffstage^'
+    'git^greview^Open the last open PR for the current branch^greview^gh'
+    'git^gstats^Per-author commit counts and lines changed^gstats [--since <date>]^'
     'docker^dockernuke^Force stop and remove a container^dockernuke <container>^'
     'docker^dockerclean-images^Remove dangling Docker images^dockerclean-images^'
     'docker^dclean^Prune unused Docker data^dclean^'
     'docker^dockerlogs^Tail container logs with timestamps^dockerlogs <container>^'
     'docker^dsh^Shell into a running container^dsh^fzf'
     'docker^dockersizes^Human-readable local image sizes^dockersizes^'
+    'docker^dimages^Fuzzy-pick an image to run, inspect, or delete^dimages^fzf'
     'docker^denv^Print a container environment^denv <container>^'
     'docker^dbuild^Build an image tagged from the directory name^dbuild [tag]^'
+    'docker^dstats^One-shot container resource usage snapshot^dstats^'
+    'docker^dcup^Bring up docker-compose services^dcup^'
+    'docker^dcdown^Tear down docker-compose services^dcdown^'
+    'docker^dhealth^Health status of all containers^dhealth^'
+    'docker^dvols^Human-readable sizes of Docker volumes^dvols^'
+    'docker^dports^Published port mappings for all containers^dports^'
     'k8s^k8sctx^Switch kubectl context and namespace^k8sctx^fzf,kubectl'
     'k8s^klogs^Stream logs from a picked pod^klogs^fzf,kubectl'
     'k8s^kexec^Exec a shell into a picked pod^kexec^fzf,kubectl'
@@ -2583,6 +3734,59 @@ _SHARMORY_REGISTRY=(
     'k8s^kns^Set the current kubectl namespace^kns <namespace>^kubectl'
     'k8s^kdesc^Describe a picked pod^kdesc^fzf,kubectl'
     'k8s^kport^Port-forward to a pod^kport <local-port> <pod> <remote-port>^kubectl'
+    'k8s^krestart^Rollout-restart a picked deployment^krestart^fzf,kubectl'
+    'k8s^kscale^Scale a picked deployment^kscale <replicas>^fzf,kubectl'
+    'k8s^kdel^Force-delete a picked stuck pod^kdel^fzf,kubectl'
+    'k8s^ksecret^Decode and print a picked secret^ksecret^fzf,kubectl'
+    'k8s^kcp^Copy a file to/from a picked pod^kcp <local-path> <pod-path>^fzf,kubectl'
+    'ruby^gemclean^Uninstall old/duplicate gem versions^gemclean^gem'
+    'ruby^rbver^Fuzzy-pick and switch Ruby version^rbver^fzf,rbenv or rvm'
+    'ruby^rboutdated^List outdated gems from Gemfile.lock^rboutdated^bundle'
+    'ruby^rspecf^Re-run last-failed RSpec examples^rspecf [args...]^bundle,rspec'
+    'java^m2size^Size of the local Maven repository cache^m2size^'
+    'java^gradlesize^Size of the local Gradle cache^gradlesize^'
+    'java^jarinfo^Inspect a jar manifest and contents^jarinfo <path-to-jar>^unzip'
+    'java^javaver^Fuzzy-pick and switch JAVA_HOME^javaver^fzf,jenv or sdkman'
+    'java^mvntree^Maven dependency tree^mvntree^mvn'
+    'db^pgc^Connect to Postgres (PG* env vars)^pgc^psql'
+    'db^myc^Connect to MySQL (MYSQL_* env vars)^myc^mysql'
+    'db^redisc^Connect to Redis (REDIS_* env vars)^redisc^redis-cli'
+    'db^pgdump^Dump a Postgres database to a .sql file^pgdump <database>^pg_dump'
+    'db^dbforward^Port-forward to a picked k8s service^dbforward <local-port> <remote-port>^fzf,kubectl'
+    'dev^serve^Serve the current directory over HTTP^serve [port]^python3 or npx'
+    'dev^todogrep^Find TODO/FIXME/HACK/XXX comments^todogrep [dir]^'
+    'dev^basec^Convert a number between bases^basec <number>^bc'
+    'dev^colorconv^Convert hex color to RGB or RGB to hex^colorconv <#rrggbb | r g b>^'
+    'dev^tunnel^Open an ngrok tunnel to a local port^tunnel <port>^ngrok'
+    'dev^bench^Time N runs of a command^bench <runs> <command...>^bc'
+    'dev^diffdir^Recursively diff two directories^diffdir <dir-a> <dir-b>^'
+    'dev^openat^Open editor at a file and line^openat <file>[:<line>]^'
+    'dev^worktree^Fuzzy-manage git worktrees^worktree <add|switch|remove>^fzf'
+    'dev^licensegen^Generate a LICENSE file^licensegen <mit|apache2> [author] [year]^'
+    'react^mkvite^Scaffold a Vite+React app^mkvite <app-name> [template]^npx'
+    'react^vitedev^Start the Vite dev server^vitedev^npm'
+    'react^vitebuild^Production build with bundle size report^vitebuild^npm'
+    'react^viteclean^Wipe node_modules/dist and reinstall^viteclean^npm'
+    'react^reactcomp^Scaffold a React component^reactcomp <ComponentName> [dir]^'
+    'react^viteenv^Copy .env.example to .env^viteenv^'
+    'react^vitelint^ESLint + Prettier + TypeScript check^vitelint [--fix]^npm'
+    'react^mkviteapi^Scaffold a companion API folder^mkviteapi [name] [--fastify]^'
+    'cron^cronlist^List crontab entries^cronlist^'
+    'cron^cronadd^Append a new cron job^cronadd "<schedule>" "<command>"^'
+    'cron^cronrm^Fuzzy-remove a cron job^cronrm^fzf'
+    'cron^cronedit^Open crontab in editor^cronedit^'
+    'cron^cronhuman^Translate cron expression to English^cronhuman "<schedule>"^'
+    'cron^cronnext^Show next N run times for a cron expression^cronnext "<schedule>" [count]^python3'
+    'api^apiwatch^Poll an endpoint and log status + time^apiwatch <url> [interval]^curl'
+    'api^apimock^Spin up a local mock JSON API server^apimock <file.json> [port]^npx'
+    'api^apidiff^Diff two JSON API responses^apidiff <a> <b>^jq'
+    'api^curltime^Detailed HTTP timing breakdown^curltime <url>^curl'
+    'api^openapipp^Validate and lint an OpenAPI spec^openapipp <spec-file>^npx'
+    'env^envgen^Generate .env.example from .env^envgen [src] [out]^'
+    'env^envrequire^Assert required env vars are set^envrequire VAR1 VAR2 ...^'
+    'env^envexport^Print export statements from a .env file^envexport [file]^'
+    'env^envmask^Print .env with secret values masked^envmask [file]^'
+    'env^envsync^Compare .env against .env.example^envsync [env] [example]^'
     'go^covreport^Go tests with HTML coverage report^covreport^'
     'go^gomodwhy^Why a module is in the Go graph^gomodwhy <module-path>^'
     'go^goclean^gofmt, vet, and mod tidy^goclean^'
@@ -2649,6 +3853,8 @@ _SHARMORY_REGISTRY=(
     'net^sshconfig^Host entries from ~/.ssh/config^sshconfig^'
     'net^headers^HTTP response headers^headers <url>^'
     'net^proxy^Toggle http(s)_proxy env vars^proxy <on [host:port]|off|status>^'
+    'net^speed^Internet speed test (speedtest-cli, fast, or curl fallback)^speed^speedtest-cli,fast'
+    'net^sshcopy^Copy SSH public key to a remote host^sshcopy <user@host> [identity-file]^'
     'security^passgen^Random base64 password^passgen [bytes]^'
     'security^pubkey^Print SSH public keys^pubkey^'
     'security^genssh^Generate an ed25519 SSH keypair^genssh <key-name> [email]^'
@@ -2671,6 +3877,8 @@ _SHARMORY_REGISTRY=(
     'system^ports^Listening TCP/UDP ports^ports^'
     'system^sysinfo^One-screen system summary^sysinfo^'
     'system^openports^Listening ports flagged by exposure^openports^'
+    'system^cpuwatch^Live CPU load monitor^cpuwatch [interval-seconds]^'
+    'system^memwatch^Live memory usage monitor^memwatch [interval-seconds]^'
     'prod^note^Append or view notes in ~/notes^note <text|today|list|search <text>>^'
     'prod^jsonpp^Pretty-print a JSON file^jsonpp <file>^jq'
     'prod^envload^Load a .env file into the shell^envload [file]^'
@@ -2686,6 +3894,7 @@ _SHARMORY_REGISTRY=(
     'prod^hist^Fuzzy-search shell history and paste selection^hist^fzf'
     'prod^mktemplate^Create project from a user template^mktemplate <template> <project>^'
     'prod^envswitch^Load a named env profile^envswitch [profile-name]^'
+    'prod^alias-list^List user-defined aliases in a neat table^alias-list [pattern]^'
     'jenkins^jenk-crumb^Jenkins CSRF crumb^jenk-crumb^jq'
     'jenkins^jenk-build^Trigger a Jenkins job build^jenk-build <job-name>^'
     'jenkins^jenk-logs^Console log of the last Jenkins build^jenk-logs <job-name>^'
@@ -2744,7 +3953,7 @@ Usage: sharmory [list|help|run|doctor|setup|bench] [args]
   sharmory setup              Install optional CLI tools (fzf, jq, eza, tldr)
   sharmory bench [n]          Source-time benchmark (default 10 runs)
 
-Categories: files git docker k8s go node python net security system prod jenkins meta
+Categories: files git docker k8s go node python net security system prod jenkins ruby java db dev react cron api env meta
 EOF
 }
 

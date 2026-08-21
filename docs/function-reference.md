@@ -64,6 +64,8 @@ Run `sharmory list` for a live version of this catalog, or `sharmory help <name>
 | `grecentbranch` | Recently checked-out branches from the reflog | `grecentbranch [n]` | |
 | `gcamend` | Amend the last commit message without touching the stage | `gcamend <new message>` | |
 | `gdiffstage` | Show what is currently staged (ready to commit) | `gdiffstage` | |
+| `greview` | Open the last open PR for the current branch in the browser | `greview` | `gh` |
+| `gstats` | Per-author commit counts and lines added/deleted | `gstats [--since <date>]` | |
 
 ---
 
@@ -77,8 +79,15 @@ Run `sharmory list` for a live version of this catalog, or `sharmory help <name>
 | `dockerlogs` | Tail container logs with timestamps | `dockerlogs <container>` | |
 | `dsh` | Fuzzy-pick a running container and open a shell inside it | `dsh` | `fzf` |
 | `dockersizes` | Human-readable sizes of local Docker images | `dockersizes` | |
+| `dimages` | Fuzzy-pick a local image to run, inspect, or delete | `dimages` | `fzf` |
 | `denv` | Print all environment variables of a running container | `denv <container>` | |
 | `dbuild` | Build a Docker image (tag defaults to the directory name) | `dbuild [tag]` | |
+| `dstats` | One-shot resource usage snapshot for all running containers | `dstats` | |
+| `dcup` | Bring up docker-compose services in the background | `dcup` | |
+| `dcdown` | Tear down docker-compose services | `dcdown` | |
+| `dhealth` | Show health status of all containers that define a healthcheck | `dhealth` | |
+| `dvols` | Human-readable sizes of local Docker volumes | `dvols` | |
+| `dports` | Show published port mappings for all running containers | `dports` | |
 
 ---
 
@@ -94,6 +103,11 @@ Run `sharmory list` for a live version of this catalog, or `sharmory help <name>
 | `kns` | Set the current kubectl namespace without changing context | `kns <namespace>` | `kubectl` |
 | `kdesc` | Fuzzy-pick a pod and run `kubectl describe` on it | `kdesc` | `fzf`, `kubectl` |
 | `kport` | Port-forward from localhost to a pod | `kport <local-port> <pod> <remote-port>` | `kubectl` |
+| `krestart` | Rollout-restart a picked deployment | `krestart` | `fzf`, `kubectl` |
+| `kscale` | Scale a picked deployment to a given replica count | `kscale <replicas>` | `fzf`, `kubectl` |
+| `kdel` | Force-delete a picked (possibly stuck) pod | `kdel` | `fzf`, `kubectl` |
+| `ksecret` | Decode and print the data of a picked secret | `ksecret` | `fzf`, `kubectl` |
+| `kcp` | Copy a file to/from a picked pod | `kcp <local-path> <pod-path>` | `fzf`, `kubectl` |
 
 ---
 
@@ -188,6 +202,8 @@ Run `sharmory list` for a live version of this catalog, or `sharmory help <name>
 | `sshconfig` | List all Host entries from `~/.ssh/config` | `sshconfig` | |
 | `headers` | Show full HTTP response headers for a URL | `headers <url>` | |
 | `proxy` | Toggle `http_proxy` / `https_proxy` environment variables | `proxy <on [host:port]\|off\|status>` | |
+| `speed` | Internet speed test (speedtest-cli, fast, or curl fallback) | `speed` | `speedtest-cli`, `fast` |
+| `sshcopy` | Copy your SSH public key to a remote host's authorized_keys | `sshcopy <user@host> [identity-file]` | |
 
 ---
 
@@ -224,6 +240,8 @@ Run `sharmory list` for a live version of this catalog, or `sharmory help <name>
 | `ports` | List all listening TCP/UDP ports with process name and PID | `ports` | |
 | `sysinfo` | One-screen system summary (OS, CPU, RAM, disk, uptime, load) | `sysinfo` | |
 | `openports` | Listening ports flagged by network exposure (0.0.0.0 / ::) | `openports` | |
+| `cpuwatch` | Live CPU load monitor, refreshes every second | `cpuwatch [interval-seconds]` | |
+| `memwatch` | Live memory usage monitor, refreshes every second | `memwatch [interval-seconds]` | |
 
 ---
 
@@ -246,6 +264,113 @@ Run `sharmory list` for a live version of this catalog, or `sharmory help <name>
 | `hist` | Fuzzy-search shell history and paste the selection on the command line | `hist` | `fzf` |
 | `mktemplate` | Create a project from a user-defined template in `~/.sharmory/templates/` | `mktemplate <template> <project>` | |
 | `envswitch` | Load a named env profile from `~/.sharmory/envprofiles/` | `envswitch [profile-name]` | |
+| `alias-list` | List user-defined aliases in a clean aligned table | `alias-list [pattern]` | |
+
+---
+
+## Ruby
+
+| Function | Description | Usage | Optional deps |
+|---|---|---|---|
+| `gemclean` | Uninstall old/duplicate gem versions, keeping only the latest of each | `gemclean` | `gem` |
+| `rbver` | Fuzzy-pick and switch the active Ruby version (rbenv/rvm aware) | `rbver` | `fzf`, `rbenv` or `rvm` |
+| `rboutdated` | List outdated gems from the current Gemfile.lock | `rboutdated` | `bundle` |
+| `rspecf` | Re-run only the last-failed RSpec examples | `rspecf [args...]` | `bundle`, `rspec` |
+
+---
+
+## Java
+
+| Function | Description | Usage | Optional deps |
+|---|---|---|---|
+| `m2size` | Report size of the local Maven repository cache | `m2size` | |
+| `gradlesize` | Report size of the local Gradle cache | `gradlesize` | |
+| `jarinfo` | Inspect a jar's manifest and top-level contents | `jarinfo <path-to-jar>` | `unzip` (Unix), `jar` (Windows) |
+| `javaver` | Fuzzy-pick and switch JAVA_HOME (jenv/sdkman aware) | `javaver` | `fzf`, `jenv` or `sdkman` |
+| `mvntree` | Print the Maven dependency tree for the current project | `mvntree` | `mvn` |
+
+---
+
+## Database
+
+| Function | Description | Usage | Optional deps |
+|---|---|---|---|
+| `pgc` | Connect to Postgres using PG* env vars (or defaults) | `pgc` | `psql` |
+| `myc` | Connect to MySQL using MYSQL_* env vars (or defaults) | `myc` | `mysql` |
+| `redisc` | Connect to Redis using REDIS_* env vars | `redisc` | `redis-cli` |
+| `pgdump` | Dump the current Postgres database to a timestamped .sql file | `pgdump <database>` | `pg_dump` |
+| `dbforward` | Port-forward to a picked k8s service with a connect hint | `dbforward <local-port> <remote-port>` | `fzf`, `kubectl` |
+
+---
+
+## General Dev
+
+| Function | Description | Usage | Optional deps |
+|---|---|---|---|
+| `serve` | Serve the current directory over HTTP | `serve [port]` | `python3` or `npx` |
+| `todogrep` | Find TODO/FIXME/HACK/XXX comments across the codebase | `todogrep [dir]` | |
+| `basec` | Convert a number between hex, decimal, octal, and binary | `basec <number>` | `bc` |
+| `colorconv` | Convert hex color to RGB or RGB to hex | `colorconv <#rrggbb>` \| `colorconv <r> <g> <b>` | |
+| `tunnel` | Open a quick ngrok tunnel to a local port | `tunnel <port>` | `ngrok` |
+| `bench` | Time N runs of a command and report min/max/avg | `bench <runs> <command...>` | `bc` |
+| `diffdir` | Recursively diff two directories | `diffdir <dir-a> <dir-b>` | |
+| `openat` | Open `$EDITOR` at a specific file and line | `openat <file>[:<line>]` | |
+| `worktree` | Fuzzy-manage git worktrees: add, switch, or remove | `worktree <add\|switch\|remove>` | `fzf` |
+| `licensegen` | Generate a LICENSE file (MIT or Apache 2.0) | `licensegen <mit\|apache2> [author] [year]` | |
+
+---
+
+## React / Vite
+
+| Function | Description | Usage | Optional deps |
+|---|---|---|---|
+| `mkvite` | Scaffold a Vite+React app — create, strip boilerplate, install, git init | `mkvite <app-name> [template]` | `npx` |
+| `vitedev` | Start the Vite dev server and open the browser | `vitedev` | `npm` |
+| `vitebuild` | Production build with dist bundle size breakdown | `vitebuild` | `npm` |
+| `viteclean` | Wipe `node_modules`/`dist`/lockfile and reinstall clean | `viteclean` | `npm` |
+| `reactcomp` | Scaffold a React component with barrel export (TS-aware) | `reactcomp <ComponentName> [dir]` | |
+| `viteenv` | Copy `.env.example` → `.env` if `.env` doesn't exist | `viteenv` | |
+| `vitelint` | Run ESLint + Prettier check + TypeScript typecheck in one pass | `vitelint [--fix]` | `npm` |
+| `mkviteapi` | Scaffold a companion Express or Fastify API folder | `mkviteapi [name] [--fastify]` | |
+
+---
+
+## Cron
+
+> **PowerShell note:** these functions target the Windows Task Scheduler under a dedicated `\Sharmory\` task folder — the same verb names are used on all platforms.
+
+| Function | Description | Usage | Optional deps |
+|---|---|---|---|
+| `cronlist` | List (numbered) crontab entries | `cronlist` | |
+| `cronadd` | Append a new cron job | `cronadd "<schedule>" "<command>"` | |
+| `cronrm` | Fuzzy-pick and remove a cron job | `cronrm` | `fzf` |
+| `cronedit` | Open the crontab in `$EDITOR` | `cronedit` | |
+| `cronhuman` | Translate a 5-field cron expression to plain English (pure shell, no deps) | `cronhuman "<min> <hour> <dom> <month> <dow>"` | |
+| `cronnext` | Show the next N scheduled run times for an expression | `cronnext "<schedule>" [count]` | `python3` + `croniter` |
+
+---
+
+## API Tools
+
+| Function | Description | Usage | Optional deps |
+|---|---|---|---|
+| `apiwatch` | Poll an endpoint; log HTTP status + response time each hit | `apiwatch <url> [interval-seconds]` | `curl` |
+| `apimock` | Spin up a local `json-server` mock API from a JSON file | `apimock <file.json> [port]` | `npx` |
+| `apidiff` | Diff two JSON API responses (URLs or local files) | `apidiff <a> <b>` | `jq` |
+| `curltime` | Detailed HTTP timing: DNS / TCP / TLS / TTFB / total | `curltime <url>` | `curl` |
+| `openapipp` | Validate and lint an OpenAPI/Swagger spec with Redocly | `openapipp <spec-file>` | `npx` |
+
+---
+
+## Env Tools
+
+| Function | Description | Usage | Optional deps |
+|---|---|---|---|
+| `envgen` | Generate a `.env.example` from `.env` — keeps keys, strips values | `envgen [src] [out]` | |
+| `envrequire` | Assert that a list of env vars are all set; exits non-zero with a missing-keys list | `envrequire VAR1 VAR2 ...` | |
+| `envexport` | Print `export KEY='value'` lines from a `.env` file (for pasting into a remote shell) | `envexport [file]` | |
+| `envmask` | Print a `.env` file with secret-looking values partially masked | `envmask [file]` | |
+| `envsync` | Compare `.env` vs `.env.example` and report keys missing from either side | `envsync [env] [example]` | |
 
 ---
 
