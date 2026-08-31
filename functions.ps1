@@ -313,6 +313,36 @@ function trash {
     Write-Host "Trashed: $Path"
 }
 
+# List files modified within a given time window
+# Accepts human units: s, m, h, d, w, mo, y  (e.g. lst 2h, lst 30m, lst 1d)
+# Usage: lst <duration>
+function lst {
+    param([Parameter(Mandatory)][string]$Duration)
+    $num = $null; $unit = $null
+    if ($Duration -match '^(\d+)(mo)$') {
+        $num = [int]$Matches[1]; $unit = "mo"
+    } elseif ($Duration -match '^(\d+)([smhdwy])$') {
+        $num = [int]$Matches[1]; $unit = $Matches[2]
+    } else {
+        Write-Host "lst: unrecognised duration '$Duration'. Use e.g. 30s, 10m, 2h, 3d, 1w, 6mo, 1y"
+        return
+    }
+    $seconds = switch ($unit) {
+        "s"  { $num }
+        "m"  { $num * 60 }
+        "h"  { $num * 3600 }
+        "d"  { $num * 86400 }
+        "w"  { $num * 604800 }
+        "mo" { $num * 2592000 }
+        "y"  { $num * 31536000 }
+    }
+    $cutoff = (Get-Date).AddSeconds(-$seconds)
+    Get-ChildItem -Recurse -File |
+        Where-Object { $_.LastWriteTime -ge $cutoff } |
+        Sort-Object FullName |
+        ForEach-Object { $_.FullName.Replace((Get-Location).Path + [IO.Path]::DirectorySeparatorChar, './') }
+}
+
 #########################################################################
 # 2. GIT
 #########################################################################
@@ -622,6 +652,31 @@ function gstats {
     $added.Keys |
         Sort-Object { $added[$_] } -Descending |
         ForEach-Object { "  {0,-30}  +{1,-8}  -{2}" -f $_, $added[$_], $deleted[$_] }
+}
+
+# Archive the current git repo (HEAD) into an archive file
+# Extension determines format: .zip (default), .tar, .tar.gz / .tgz
+# Usage: gitarchive <name[.ext]>
+function gitarchive {
+    param([Parameter(Mandatory)][string]$Name)
+    if (-not (git rev-parse --git-dir 2>$null)) {
+        Write-Host "Not inside a git repository."
+        return
+    }
+    $out = $Name
+    $fmt = switch -Wildcard ($Name) {
+        "*.tar.gz" { "tar.gz" }
+        "*.tgz"    { "tar.gz" }
+        "*.tar"    { "tar" }
+        "*.zip"    { "zip" }
+        default    { $out = "$Name.zip"; "zip" }
+    }
+    if ($fmt -eq "tar.gz" -or $fmt -eq "tar") {
+        git archive --format=$fmt HEAD -o $out
+    } else {
+        git archive --format=zip HEAD -o $out
+    }
+    Write-Host "Created: $out"
 }
 
 #########################################################################
@@ -3227,6 +3282,7 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "files"; Name = "recent"; Description = "Most recently modified files"; Usage = "recent [n]"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "swap"; Description = "Swap two filenames"; Usage = "swap <file-a> <file-b>"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "trash"; Description = "Move a path to the Recycle Bin"; Usage = "trash <file-or-dir>"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "lst"; Description = "List files modified within a time window"; Usage = "lst <duration>"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "fcd"; Description = "Interactively cd into a subdirectory via fzf"; Usage = "fcd"; Deps = "fzf" }
         [pscustomobject]@{ Category = "files"; Name = "ftext"; Description = "Fuzzy-search file contents and open match"; Usage = "ftext"; Deps = "fzf" }
         [pscustomobject]@{ Category = "files"; Name = "watchrun"; Description = "Re-run a command on file change"; Usage = "watchrun <path> <command>"; Deps = "watchexec" }
@@ -3255,6 +3311,7 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "git"; Name = "gcamend"; Description = "Amend the last commit message"; Usage = "gcamend <message>"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "grecentbranch"; Description = "Recently checked-out branches from reflog"; Usage = "grecentbranch [n]"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "gdiffstage"; Description = "Show staged diff (git diff --cached)"; Usage = "gdiffstage"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "gitarchive"; Description = "Archive HEAD into a zip/tar/tar.gz (ext = format, default zip)"; Usage = "gitarchive <name[.ext]>"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dockernuke"; Description = "Force stop and remove a container"; Usage = "dockernuke <container>"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dockerclean-images"; Description = "Remove dangling Docker images"; Usage = "dockerclean-images"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dclean"; Description = "Prune unused Docker data"; Usage = "dclean"; Deps = "" }

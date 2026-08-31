@@ -82,6 +82,7 @@ All functions are available in Bash, Zsh, and PowerShell. Sorted alphabetically.
 | `gemclean` | Uninstall old/duplicate gem versions, keeping only the latest of each | `gemclean` |
 | `genuuid` | Generate a random UUID v4 | `genuuid` |
 | `genssh` | Generate a new ed25519 SSH keypair | `genssh <key-name> [email]` |
+| `gitarchive` | Archive HEAD — extension sets format (.zip default, .tar, .tar.gz, .tgz, .tar.bz2) | `gitarchive <name[.ext]>` |
 | `gitbranch-rename` | Rename a branch locally and on the remote | `gitbranch-rename <old> <new>` |
 | `gitcleanup` | Prune remotes, delete merged branches, tidy Go module | `gcleanup` |
 | `gitconflicts` | List files with unresolved merge conflicts | `gitconflicts` |
@@ -153,6 +154,7 @@ All functions are available in Bash, Zsh, and PowerShell. Sorted alphabetically.
 | `licensegen` | Generate a LICENSE file (MIT or Apache 2.0) | `licensegen <mit\|apache2> [author] [year]` |
 | `localip` | Your local network IP address | `localip` |
 | `lsd` | Enhanced directory listing (icons, git status, sort by modified) | `lsd` |
+| `lst` | List files modified within a time window (e.g. 2h, 30m, 1d, 1w, 6mo, 1y) | `lst <duration>` |
 | `m2size` | Report size of the local Maven repository cache | `m2size` |
 | `mem` | Current physical memory usage | `mem` |
 | `memwatch` | Live memory usage monitor, refreshes every second | `memwatch [interval-seconds]` |

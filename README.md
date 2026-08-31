@@ -192,6 +192,7 @@ standard alternative) if it is missing.
 | `fcd` | `fcd` | Interactively pick a subdirectory with `fzf` and `cd` into it |
 | `ftext` | `ftext` | Fuzzy-search all file contents with `fzf` and open the matching file in `$EDITOR` |
 | `watchrun` | `watchrun <path> <cmd>` | Re-run a shell command whenever files under `<path>` change (uses `entr` / `watchexec`) |
+| `lst` | `lst <duration>` | List files modified within a time window — `lst 2h`, `lst 30m`, `lst 1d`, `lst 1w`, `lst 6mo`, `lst 1y` |
 
 ### 🌿 Git
 
@@ -222,6 +223,7 @@ standard alternative) if it is missing.
 | `gitignore` | `gitignore <lang,...>` | Append a language template from gitignore.io to `.gitignore` |
 | `gitbranch-rename` | `gitbranch-rename <old> <new>` | Rename a branch both locally and on the remote |
 | `gcleanup` | `gcleanup` | Prune remote refs, delete merged branches, and run `go mod tidy` if applicable |
+| `gitarchive` | `gitarchive <name[.ext]>` | Archive HEAD — extension sets format (`.zip` default, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`) |
 
 ### 🐳 Docker
 

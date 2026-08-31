@@ -28,11 +28,11 @@
 unalias -- \
     mkcd up lsd fcd ftext permsof extract compress duh sizeof findbig \
     emptydirs dupfind bak cwd clipcopy clip watchrun \
-    treelist recent swap trash \
+    treelist recent swap trash lst \
     gitundo branchclean branchage gitlog-today gacp gclone gwip gunwip \
     gitprune gswitch prdiff gitcontributors gitsize gitconflicts gitignore \
     gstash grebase gopen gpr gitbranch-rename gitlog-graph gcleanup \
-    grecentbranch gcamend gdiffstage greview gstats \
+    grecentbranch gcamend gdiffstage greview gstats gitarchive \
     dockernuke dockerclean-images dclean dockerlogs dsh dockersizes dimages \
     dstats dcup dcdown dhealth dvols dports \
     k8sctx klogs kexec ktop kevents \
@@ -473,6 +473,53 @@ trash() {
     echo "Trashed: $1"
 }
 
+# List files modified within a given time window
+# Accepts human units: s(econds), m(inutes), h(ours), d(ays), w(eeks), mo(nths), y(ears)
+# Usage: lst <duration>   e.g. lst 2h  lst 30m  lst 1d  lst 1w  lst 6mo  lst 1y
+lst() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: lst <duration>   e.g. lst 2h  lst 30m  lst 1d  lst 1w  lst 6mo  lst 1y"
+        return 1
+    fi
+    local input="$1"
+    local num unit seconds
+    # Parse number and unit — support "mo" (months) and single-letter units
+    if [[ "$input" =~ ^([0-9]+)(mo)$ ]]; then
+        num="${BASH_REMATCH[1]}"
+        unit="mo"
+    elif [[ "$input" =~ ^([0-9]+)([smhdwy])$ ]]; then
+        num="${BASH_REMATCH[1]}"
+        unit="${BASH_REMATCH[2]}"
+    else
+        echo "lst: unrecognised duration '$input'. Use e.g. 30s, 10m, 2h, 3d, 1w, 6mo, 1y"
+        return 1
+    fi
+    case "$unit" in
+        s)  seconds=$(( num )) ;;
+        m)  seconds=$(( num * 60 )) ;;
+        h)  seconds=$(( num * 3600 )) ;;
+        d)  seconds=$(( num * 86400 )) ;;
+        w)  seconds=$(( num * 604800 )) ;;
+        mo) seconds=$(( num * 2592000 )) ;;
+        y)  seconds=$(( num * 31536000 )) ;;
+    esac
+    local cutoff=$(( $(date +%s) - seconds ))
+    # GNU find (Linux) supports -printf; macOS find does not
+    if find . -maxdepth 0 -printf '' 2>/dev/null; then
+        find . -type f -not -path '*/.git*' -printf '%T@ %p\n' 2>/dev/null \
+            | awk -v cut="$cutoff" '$1 >= cut {print $2}' \
+            | sort
+    else
+        # macOS: use stat to get mtime per file
+        find . -type f -not -path '*/.git*' 2>/dev/null \
+            | while IFS= read -r f; do
+                mtime=$(stat -f '%m' "$f" 2>/dev/null)
+                [[ -n "$mtime" && "$mtime" -ge "$cutoff" ]] && echo "$f"
+              done \
+            | sort
+    fi
+}
+
 #########################################################################
 # 2. GIT
 #########################################################################
@@ -817,6 +864,37 @@ gstats() {
                     printf "  %-30s  +%-8d  -%d\n", a, added[a], deleted[a]
             }
         ' | sort -t'+' -k2 -rn
+}
+
+# Archive the current git repo (HEAD) into an archive file
+# Extension determines format: .zip (default), .tar, .tar.gz / .tgz, .tar.bz2
+# Usage: gitarchive <name[.ext]>
+gitarchive() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: gitarchive <name[.ext]>"
+        echo "  Supported: .zip (default), .tar, .tar.gz, .tgz, .tar.bz2"
+        return 1
+    fi
+    if ! git rev-parse --git-dir &>/dev/null; then
+        echo "Not inside a git repository."
+        return 1
+    fi
+    local out="$1"
+    # Infer format from extension; default to zip if none given
+    case "$out" in
+        *.tar.bz2)
+            git archive --format=tar HEAD | bzip2 > "$out" ;;
+        *.tar.gz|*.tgz)
+            git archive --format=tar.gz HEAD -o "$out" ;;
+        *.tar)
+            git archive --format=tar HEAD -o "$out" ;;
+        *.zip)
+            git archive --format=zip HEAD -o "$out" ;;
+        *)
+            out="${out}.zip"
+            git archive --format=zip HEAD -o "$out" ;;
+    esac
+    echo "Created: $out"
 }
 
 #########################################################################
@@ -3706,6 +3784,7 @@ _SHARMORY_REGISTRY=(
     'files^recent^Most recently modified files^recent [n]^'
     'files^swap^Atomically swap two filenames^swap <file-a> <file-b>^'
     'files^trash^Move a path to the system trash^trash <file-or-dir>^'
+    'files^lst^List files modified within a time window^lst <duration>^'
     'git^gitundo^Undo last commit, keep changes staged^gitundo^'
     'git^branchclean^Delete local branches already merged^branchclean^'
     'git^branchage^Local branches sorted by last commit date^branchage^'
@@ -3731,6 +3810,7 @@ _SHARMORY_REGISTRY=(
     'git^grecentbranch^Recently checked-out branches from reflog^grecentbranch [n]^'
     'git^gcamend^Amend last commit message without touching stage^gcamend <new message>^'
     'git^gdiffstage^Show what is currently staged^gdiffstage^'
+    'git^gitarchive^Archive HEAD into a zip/tar/tar.gz (ext = format, default zip)^gitarchive <name[.ext]>^'
     'docker^dockernuke^Force stop and remove a container^dockernuke <container>^'
     'docker^dockerclean-images^Remove dangling Docker images^dockerclean-images^'
     'docker^dclean^Prune unused Docker data^dclean^'
