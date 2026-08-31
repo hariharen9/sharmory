@@ -1456,17 +1456,18 @@ function cronnext {
         [Parameter(Mandatory)][string]$Schedule,
         [int]$Count = 5
     )
-    $script = @"
+    $script = @'
+import sys
 from croniter import croniter
 from datetime import datetime
-it = croniter('$Schedule', datetime.now())
-for _ in range($Count):
+it = croniter(sys.argv[1], datetime.now())
+for _ in range(int(sys.argv[2])):
     print(it.get_next(datetime))
-"@
+'@
     try {
-        python -c $script
+        $script | python3 - $Schedule $Count
     } catch {
-        Write-Host "Requires python with 'croniter' installed (pip install croniter)"
+        Write-Host "Requires python3 with 'croniter' installed (pip install croniter)"
     }
 }
 
@@ -2796,7 +2797,13 @@ function cheat {
 # Usage: calc "2 + 2 * 3"
 function calc {
     param([Parameter(Mandatory)][string]$Expression)
-    Invoke-Expression $Expression
+    try {
+        $result = [double]([System.Data.DataTable]::new().Compute($Expression, $null))
+        Write-Output $result
+    } catch {
+        Write-Host "Invalid expression: $Expression"
+        return
+    }
 }
 
 # Generate a QR code for text/URL and display it in the terminal

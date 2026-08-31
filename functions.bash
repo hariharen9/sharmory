@@ -1687,13 +1687,16 @@ cronnext() {
         return 1
     fi
     local expr="$1" count="${2:-5}"
-    python3 -c "
+    python3 - "$expr" "$count" 2>/dev/null <<'EOF'
+import sys
 from croniter import croniter
 from datetime import datetime
-it = croniter('$expr', datetime.now())
-for _ in range($count):
+it = croniter(sys.argv[1], datetime.now())
+for _ in range(int(sys.argv[2])):
     print(it.get_next(datetime))
-" 2>/dev/null || echo "Requires python3 with 'croniter' installed (pip install croniter)"
+EOF
+    [[ ${PIPESTATUS[0]} -ne 0 ]] && echo "Requires python3 with 'croniter' installed (pip install croniter)"
+    return 0
 }
 
 #########################################################################
@@ -3384,8 +3387,7 @@ calc() {
         echo "Usage: calc <expression>"
         return 1
     fi
-    # Pass as a single quoted argument to python3 to prevent shell injection
-    python3 -c "print($1)"
+    python3 -c "import sys; print(eval(sys.argv[1]))" "$1"
 }
 
 # Generate a QR code for text/URL and display it in the terminal
@@ -3659,7 +3661,7 @@ sharmory-update() {
     local failed=0
     echo "Updating Sharmory from GitHub..."
     mkdir -p "$dir"
-    for f in functions.bash functions.zsh; do
+    for f in functions.bash functions.zsh functions.ps1; do
         if curl -fsSL "${base_url}/${f}" -o "${dir}/${f}"; then
             echo "  ✅ ${f}"
         else
