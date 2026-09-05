@@ -352,7 +352,7 @@ if ($HasGit) {
     Invoke-SharmoryTest "branchage"     { branchage }
     Invoke-SharmoryTest "gitlog-today"  { gitlog-today }
     Invoke-SharmoryTest "gacp"          { git checkout -q feature/test-branch; "more" | Add-Content file1.txt; gacp "test commit via gacp" }
-    Invoke-SharmoryTest "gclone"        { Set-Location ..; Remove-Item -Recurse -Force clone-test -ErrorAction SilentlyContinue; gclone "$RemoteDir" clone-test }
+    Invoke-SharmoryTest "gclone"        { Set-Location ..; Remove-Item -Recurse -Force clone-test,remote -ErrorAction SilentlyContinue; gclone "$RemoteDir"; if ((Split-Path (Get-Location) -Leaf) -ne "remote") { throw "gclone default dir failed" }; Set-Location ..; gclone "$RemoteDir" clone-test }
     Invoke-SharmoryTest "gwip"          { "wipchange" | Add-Content file1.txt; gwip }
     Invoke-SharmoryTest "gunwip"        { gunwip }
     Invoke-SharmoryTest "gitprune"      { gitprune }

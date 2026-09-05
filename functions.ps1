@@ -403,9 +403,20 @@ function gacp {
 # Usage: gclone <repo-url> [dir]
 function gclone {
     param([Parameter(Mandatory)][string]$Url, [string]$Dir)
-    git clone $Url $Dir
-    $target = if ($Dir) { $Dir } else { [System.IO.Path]::GetFileNameWithoutExtension($Url) }
-    Set-Location $target
+    if ($Dir) {
+        git clone $Url $Dir
+    } else {
+        git clone $Url
+    }
+    if ($LASTEXITCODE -ne 0) {
+        return
+    }
+    $target = if ($Dir) { $Dir } else { [System.IO.Path]::GetFileNameWithoutExtension($Url.TrimEnd('/')) }
+    if (Test-Path $target) {
+        Set-Location $target
+    } else {
+        Write-Warning "Expected directory '$target' not found after clone."
+    }
 }
 
 # Commit "work in progress" — quick checkpoint commit for uncommitted changes
