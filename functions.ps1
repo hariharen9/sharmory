@@ -3334,6 +3334,8 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "git"; Name = "gcamend"; Description = "Amend the last commit message"; Usage = "gcamend <message>"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "grecentbranch"; Description = "Recently checked-out branches from reflog"; Usage = "grecentbranch [n]"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "gdiffstage"; Description = "Show staged diff (git diff --cached)"; Usage = "gdiffstage"; Deps = "" }
+        [pscustomobject]@{ Category = "git"; Name = "greview"; Description = "Open the last open PR for the current branch"; Usage = "greview"; Deps = "gh" }
+        [pscustomobject]@{ Category = "git"; Name = "gstats"; Description = "Per-author commit counts and lines changed"; Usage = "gstats [--since <date>]"; Deps = "" }
         [pscustomobject]@{ Category = "git"; Name = "gitarchive"; Description = "Archive HEAD into a zip/tar/tar.gz (ext = format, default zip)"; Usage = "gitarchive <name[.ext]>"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dockernuke"; Description = "Force stop and remove a container"; Usage = "dockernuke <container>"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dockerclean-images"; Description = "Remove dangling Docker images"; Usage = "dockerclean-images"; Deps = "" }
@@ -3343,6 +3345,7 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "docker"; Name = "denv"; Description = "Print a container environment"; Usage = "denv <container>"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dbuild"; Description = "Build an image tagged from the directory name"; Usage = "dbuild [tag]"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dsh"; Description = "Fuzzy-pick a container and open a shell"; Usage = "dsh"; Deps = "fzf,docker" }
+        [pscustomobject]@{ Category = "docker"; Name = "dimages"; Description = "Fuzzy-pick an image to run, inspect, or delete"; Usage = "dimages"; Deps = "fzf" }
         [pscustomobject]@{ Category = "docker"; Name = "dstats"; Description = "One-shot container resource usage snapshot"; Usage = "dstats"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dcup"; Description = "Bring up docker-compose services"; Usage = "dcup"; Deps = "" }
         [pscustomobject]@{ Category = "docker"; Name = "dcdown"; Description = "Tear down docker-compose services"; Usage = "dcdown"; Deps = "" }
@@ -3471,6 +3474,8 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "net"; Name = "pingcheck"; Description = "Five pings to a host"; Usage = "pingcheck <host>"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "sshconfig"; Description = "Host entries from ~/.ssh/config"; Usage = "sshconfig"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "headers"; Description = "HTTP response headers"; Usage = "headers <url>"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "speed"; Description = "Internet speed test (speedtest-cli, fast, or curl fallback)"; Usage = "speed"; Deps = "speedtest-cli,fast" }
+        [pscustomobject]@{ Category = "net"; Name = "sshcopy"; Description = "Copy SSH public key to a remote host"; Usage = "sshcopy <user@host> [identity-file]"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "certcheck"; Description = "TLS certificate expiry for a host"; Usage = "certcheck <host> [port]"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "tlscheck"; Description = "Full TLS certificate chain info"; Usage = "tlscheck <host> [port]"; Deps = "" }
         [pscustomobject]@{ Category = "net"; Name = "portscan"; Description = "Scan a port range on a host"; Usage = "portscan <host> <start> [end]"; Deps = "" }
@@ -3498,6 +3503,8 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "system"; Name = "sysinfo"; Description = "One-screen system summary"; Usage = "sysinfo"; Deps = "" }
         [pscustomobject]@{ Category = "system"; Name = "fkill"; Description = "Fuzzy-pick a process and kill it"; Usage = "fkill"; Deps = "fzf" }
         [pscustomobject]@{ Category = "system"; Name = "openports"; Description = "Listening ports flagged by exposure"; Usage = "openports"; Deps = "" }
+        [pscustomobject]@{ Category = "system"; Name = "cpuwatch"; Description = "Live CPU load monitor"; Usage = "cpuwatch [interval-seconds]"; Deps = "" }
+        [pscustomobject]@{ Category = "system"; Name = "memwatch"; Description = "Live memory usage monitor"; Usage = "memwatch [interval-seconds]"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "note"; Description = "Append or view notes in ~/notes"; Usage = "note <text|today|list|search <text>>"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "jsonpp"; Description = "Pretty-print a JSON file"; Usage = "jsonpp <file>"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "envload"; Description = "Load a .env file into the environment"; Usage = "envload [file]"; Deps = "" }
@@ -3513,6 +3520,7 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "prod"; Name = "hist"; Description = "Fuzzy-search shell history and paste selection"; Usage = "hist"; Deps = "fzf" }
         [pscustomobject]@{ Category = "prod"; Name = "mktemplate"; Description = "Create project from a user template"; Usage = "mktemplate <template> <project>"; Deps = "" }
         [pscustomobject]@{ Category = "prod"; Name = "envswitch"; Description = "Load a named env profile"; Usage = "envswitch [profile-name]"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "alias-list"; Description = "List user-defined aliases in a neat table"; Usage = "alias-list [pattern]"; Deps = "" }
         [pscustomobject]@{ Category = "jenkins"; Name = "jenk-crumb"; Description = "Jenkins CSRF crumb"; Usage = "jenk-crumb"; Deps = "" }
         [pscustomobject]@{ Category = "jenkins"; Name = "jenk-build"; Description = "Trigger a Jenkins job build"; Usage = "jenk-build <job-name>"; Deps = "" }
         [pscustomobject]@{ Category = "jenkins"; Name = "jenk-logs"; Description = "Console log of the last Jenkins build"; Usage = "jenk-logs <job-name>"; Deps = "" }

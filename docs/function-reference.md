@@ -32,6 +32,8 @@ Run `sharmory list` for a live version of this catalog, or `sharmory help <name>
 | `recent` | Show the N most recently modified files | `recent [n]` | |
 | `swap` | Atomically swap two filenames | `swap <file-a> <file-b>` | |
 | `trash` | Move a file or directory to the system trash | `trash <file-or-dir>` | |
+| `lst` | List files modified within a time window | `lst <duration>` | |
+| `catn` | Print file contents with line numbers | `catn <file>` | |
 
 ---
 
@@ -66,6 +68,7 @@ Run `sharmory list` for a live version of this catalog, or `sharmory help <name>
 | `gdiffstage` | Show what is currently staged (ready to commit) | `gdiffstage` | |
 | `greview` | Open the last open PR for the current branch in the browser | `greview` | `gh` |
 | `gstats` | Per-author commit counts and lines added/deleted | `gstats [--since <date>]` | |
+| `gitarchive` | Archive HEAD into a zip/tar/tar.gz (ext = format, default zip) | `gitarchive <name[.ext]>` | |
 
 ---
 
