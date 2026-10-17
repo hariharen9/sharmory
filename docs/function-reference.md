@@ -207,6 +207,9 @@ Run `sharmory list` for a live version of this catalog, or `sharmory help <name>
 | `proxy` | Toggle `http_proxy` / `https_proxy` environment variables | `proxy <on [host:port]\|off\|status>` | |
 | `speed` | Internet speed test (speedtest-cli, fast, or curl fallback) | `speed` | `speedtest-cli`, `fast` |
 | `sshcopy` | Copy your SSH public key to a remote host's authorized_keys | `sshcopy <user@host> [identity-file]` | |
+| `corscheck` | Check CORS preflight response headers for a URL | `corscheck <url> [origin]` | `curl` |
+| `webhook-dump` | Spin up a temporary local HTTP listener dumping incoming webhooks | `webhook-dump [port]` | |
+| `killdev` | Kill common rogue dev server ports (3000, 3001, 5173, 8000, 8080) | `killdev [extra-ports...]` | |
 
 ---
 
@@ -224,6 +227,7 @@ Run `sharmory list` for a live version of this catalog, or `sharmory help <name>
 | `hashfile` | Compute MD5, SHA1, and SHA256 hashes of a file | `hashfile <file>` | |
 | `genuuid` | Generate a random UUID v4 | `genuuid` | `uuidgen` or `python3` |
 | `jwtdecode` | Decode a JWT header and payload (no signature verification) | `jwtdecode <token>` | `jq` |
+| `jwtexpire` | Show human-readable time remaining for a JWT exp claim | `jwtexpire <token>` | |
 | `dotenv-check` | Lint a `.env` file for empty values, duplicates, and unquoted secrets | `dotenv-check [file]` | |
 
 ---
@@ -268,6 +272,9 @@ Run `sharmory list` for a live version of this catalog, or `sharmory help <name>
 | `mktemplate` | Create a project from a user-defined template in `~/.sharmory/templates/` | `mktemplate <template> <project>` | |
 | `envswitch` | Load a named env profile from `~/.sharmory/envprofiles/` | `envswitch [profile-name]` | |
 | `alias-list` | List user-defined aliases in a clean aligned table | `alias-list [pattern]` | |
+| `slugify` | Convert any text into a clean URL or git branch slug | `slugify "<text>"` | |
+| `codestats` | Line count statistics grouped by file extension | `codestats [dir]` | |
+| `pathclean` | Deduplicate and remove non-existent directories from PATH | `pathclean` | |
 
 ---
 
@@ -320,6 +327,8 @@ Run `sharmory list` for a live version of this catalog, or `sharmory help <name>
 | `openat` | Open `$EDITOR` at a specific file and line | `openat <file>[:<line>]` | |
 | `worktree` | Fuzzy-manage git worktrees: add, switch, or remove | `worktree <add\|switch\|remove>` | `fzf` |
 | `licensegen` | Generate a LICENSE file (MIT or Apache 2.0) | `licensegen <mit\|apache2> [author] [year]` | |
+| `devclean` | Interactively clean heavy dev caches (node_modules, pycache, docker) | `devclean` | `docker` |
+| `findreplace` | Safe project-wide find and replace across text files with preview | `findreplace <find> <replace> [dir]` | |
 
 ---
 
@@ -387,6 +396,18 @@ These functions require the environment variables `JENKINS_URL`, `JENKINS_USER`,
 | `jenk-build` | Trigger a build for a Jenkins job | `jenk-build <job-name>` | |
 | `jenk-logs` | Fetch the console log of the last build | `jenk-logs <job-name>` | |
 | `jenk-jobs` | List all job names on the configured Jenkins server | `jenk-jobs` | `jq` |
+
+---
+
+## AI & LLM
+
+| Function | Description | Usage | Optional deps |
+|---|---|---|---|
+| `ai` | Prompt local Ollama or OpenAI/Gemini API (pipe-friendly) | `ai <prompt>` or `cat file \| ai <prompt>` | `curl` |
+| `gcommit-ai` | Generate conventional commit message from staged diff using AI | `gcommit-ai` | `git` |
+| `gai` | Shortcut for `gcommit-ai` | `gai` | `git` |
+| `ollamals` | List running Ollama models and VRAM usage | `ollamals` | `ollama` |
+| `ollamastop` | Stop or unload a running Ollama model (with fuzzy picker) | `ollamastop [model]` | `fzf`, `ollama` |
 
 ---
 

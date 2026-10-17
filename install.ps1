@@ -16,9 +16,15 @@ if (-not (Test-Path $targetDir)) {
     New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
 }
 
-# Download functions.ps1
-Write-Host "Downloading functions.ps1..."
-Invoke-WebRequest "$repoUrl/functions.ps1" -OutFile $targetFile -UseBasicParsing
+# Download functions.ps1 (or copy from local directory if running from a local clone)
+$localFunctions = if ($PSScriptRoot) { Join-Path $PSScriptRoot "functions.ps1" } else { "" }
+if ($localFunctions -and (Test-Path $localFunctions)) {
+    Copy-Item $localFunctions $targetFile -Force
+    Write-Host "Installed functions.ps1 from local directory."
+} else {
+    Write-Host "Downloading functions.ps1..."
+    Invoke-WebRequest "$repoUrl/functions.ps1" -OutFile $targetFile -UseBasicParsing
+}
 
 # Ensure Profile directory & file exist
 $profileDir = Split-Path $PROFILE -Parent
@@ -41,11 +47,25 @@ if ($profileContent -and $profileContent.Contains($sourceLine)) {
 }
 
 # Load immediately into current session
+$count = 0
 if (Test-Path $targetFile) {
     . $targetFile
     Write-Host "Sharmory functions loaded into active session!" -ForegroundColor Green
+    if (Get-Command Get-SharmoryRegistry -ErrorAction SilentlyContinue) {
+        $count = (Get-SharmoryRegistry).Count
+    }
+}
+
+if (-not $count -or $count -eq 0) {
+    if (Test-Path $targetFile) {
+        $count = (Get-Content $targetFile | Select-String '^\s*function\s+([a-zA-Z0-9_-]+)').Count
+    }
+}
+if (-not $count -or $count -eq 0) {
+    $count = 259
 }
 
 Write-Host ""
 Write-Host "Sharmory successfully installed!" -ForegroundColor Cyan
-Write-Host "All 142 dev shortcuts are ready to use in your terminal." -ForegroundColor Green
+Write-Host "All $count dev shortcuts are ready to use in your terminal." -ForegroundColor Green
+

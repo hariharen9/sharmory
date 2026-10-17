@@ -258,6 +258,9 @@ body='{"mock":"response"}'
 [[ "$url" == *crumbIssuer* ]] && body='{"crumb":"mockcrumb1234"}'
 [[ "$url" == *"/api/json"* && "$url" != *crumbIssuer* ]] && body='{"jobs":[{"name":"mock-job-1"},{"name":"mock-job-2"}]}'
 [[ "$url" == *functions.zsh* ]] && body='# mock updated functions.zsh'
+[[ "$url" == *11434/api/tags* ]] && body='{"models":[{"name":"llama3.2"}]}'
+[[ "$url" == *11434/api/generate* ]] && body='{"response":"mock ai response"}'
+[[ "$url" == *11434/api/ps* ]] && body='{"models":[{"name":"llama3.2","size":4000000000,"size_vram":4000000000,"expires_at":"2026-10-18T00:00:00Z"}]}'
 $has_o_devnull && body=""
 $head_only && body="HTTP/2 200
 content-type: text/html; charset=UTF-8
@@ -1046,6 +1049,22 @@ run  "jenk-logs"   "jenk-logs mock-job"
 #########################################################################
 section "Sharmory Management"
 run  "sharmory-update" "sharmory-update"
+
+#########################################################################
+# 12j. AI & DEVELOPER PRODUCTIVITY HELPERS
+#########################################################################
+section "AI & Developer Helpers"
+run  "slugify"            "[ \"\$(slugify 'Feature: Add OAuth Login (v2)!')\" = 'feature-add-oauth-login-v2' ]"
+run  "pathclean"          "pathclean"
+run  "codestats"          "codestats ."
+run  "killdev"            "killdev; true"
+run  "jwtexpire"          "jwtexpire 'eyJhbGciOiJub25lIn0.eyJleHAiOjI1MzM3MDc2NDgwMH0.' | grep -q 'Valid -- expires in'"
+run  "corscheck"          "corscheck 'http://example.com'"
+run  "findreplace(match)" "printf 'replace_target_abc\n' > fr_test.txt && printf 'n\n' | findreplace 'replace_target_abc' 'replaced_xyz' . ; rm -f fr_test.txt"
+run  "ollamals"           "ollamals"
+run  "ollamastop"         "ollamastop test-model"
+run  "devclean"           "printf 'n\nn\nn\n' | devclean; true"
+run  "ai"                 "ai 'test' || true"
 
 #########################################################################
 # 13. ORCHESTRATOR

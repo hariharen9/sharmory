@@ -63,6 +63,15 @@ function fzf {
     $line = $input | Where-Object { $_ -and $_.ToString().Trim() -ne "" } | Select-Object -First 1
     if ($line) { $line }
 }
+function eza { Write-Host "[mock] eza $args" }
+function ollama {
+    $s = $args -join ' '
+    switch -Wildcard ($s) {
+        "ps*"   { "NAME`tID`tSIZE`tMODIFIED`nllama3.2:latest`ta1b2c3d4`t2.0 GB`t2 hours ago" }
+        "stop*" { "success" }
+        default { Write-Host "[mock] ollama $s" }
+    }
+}
 
 # --- docker / kubectl: canned responses, never touch a real daemon ---
 function docker {
@@ -203,6 +212,9 @@ function Invoke-RestMethod {
     if ($Uri -like "*api/json*")    { return [PSCustomObject]@{ jobs = @([PSCustomObject]@{ name = "mock-job-1" }, [PSCustomObject]@{ name = "mock-job-2" }) } }
     if ($Uri -like "*is.gd*")       { return "https://is.gd/mocklink" }
     if ($Uri -like "*gitignore*")   { return "# mock gitignore content" }
+    if ($Uri -like "*11434/api/tags*") { return [PSCustomObject]@{ models = @([PSCustomObject]@{ name = "llama3.2" }) } }
+    if ($Uri -like "*11434/api/generate*") { return [PSCustomObject]@{ response = "mock ai response" } }
+    if ($Uri -like "*11434/api/ps*") { return [PSCustomObject]@{ models = @([PSCustomObject]@{ name = "llama3.2"; size = 4000000000; size_vram = 4000000000; expires_at = "2026-10-18T00:00:00Z" }) } }
     return [PSCustomObject]@{ mock = "response" }
 }
 function Invoke-WebRequest {
@@ -859,6 +871,35 @@ Invoke-SharmoryTest "jenk-jobs"  { jenk-jobs }
 #########################################################################
 Write-Host "-- Sharmory Management --"
 Invoke-SharmoryTest "sharmory-update" { sharmory-update }
+
+#########################################################################
+# 12j. AI & DEVELOPER PRODUCTIVITY HELPERS
+#########################################################################
+Write-Host "-- AI & Developer Helpers --"
+Invoke-SharmoryTest "slugify" {
+    $s = slugify "Feature: Add OAuth Login (v2)!"
+    if ($s -ne "feature-add-oauth-login-v2") { throw "unexpected slug: $s" }
+}
+Invoke-SharmoryTest "pathclean" { pathclean }
+Invoke-SharmoryTest "codestats" { codestats . }
+Invoke-SharmoryTest "killdev" { killdev }
+Invoke-SharmoryTest "jwtexpire" {
+    $token = "eyJhbGciOiJub25lIn0.eyJleHAiOjI1MzM3MDc2NDgwMH0."
+    $out = jwtexpire $token | Out-String
+    if ($out -notmatch "Valid -- expires in") { throw "expected Valid exp: $out" }
+}
+Invoke-SharmoryTest "corscheck" { corscheck "http://example.com" }
+Invoke-SharmoryTest "findreplace" {
+    "replace_target_abc" | Out-File fr_test.txt -Encoding utf8
+    findreplace "replace_target_abc" "replaced_xyz" .
+}
+Invoke-SharmoryTest "ollamals" { ollamals }
+Invoke-SharmoryTest "ollamastop" { ollamastop "test-model" }
+Invoke-SharmoryTest "devclean" { devclean }
+Invoke-SharmoryTest "ai" {
+    $out = ai "test prompt" | Out-String
+}
+
 
 #########################################################################
 # 13. ORCHESTRATOR

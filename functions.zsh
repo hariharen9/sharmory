@@ -60,6 +60,8 @@ unalias -- \
     cronlist cronadd cronrm cronedit cronhuman cronnext \
     apiwatch apimock apidiff curltime openapipp \
     envgen envrequire envexport envmask envsync \
+    ai gcommit-ai gai ollamals ollamastop corscheck jwtexpire webhook-dump \
+    killdev devclean findreplace slugify codestats pathclean \
     sharmory-update sharmory-doctor sharmory-setup sharmory-bench sharmory \
     2>/dev/null; true
 
@@ -3751,6 +3753,392 @@ sharmory-update() {
 }
 
 #########################################################################
+# 12j. AI & DEVELOPER PRODUCTIVITY HELPERS
+#########################################################################
+
+# Prompt local Ollama or OpenAI/Gemini API (supports piped stdin)
+# Usage: ai <prompt>  or  cat file.txt | ai <instructions>
+ai() {
+    local piped=""
+    if [[ ! -t 0 ]]; then
+        piped="$(cat)"
+    fi
+    local query="$*"
+    local full_prompt=""
+    if [[ -n "$piped" && -n "$query" ]]; then
+        full_prompt="${query}"$'\n\n'"Context:"$'\n'"${piped}"
+    elif [[ -n "$piped" ]]; then
+        full_prompt="$piped"
+    elif [[ -n "$query" ]]; then
+        full_prompt="$query"
+    else
+        echo "Usage: ai <prompt>  or  cat file.txt | ai <instructions>"
+        return 1
+    fi
+
+    # 1. Ollama check
+    if curl -s --connect-timeout 1 http://localhost:11434/api/tags >/dev/null 2>&1; then
+        local model="${OLLAMA_MODEL:-llama3.2}"
+        if command -v ollama &>/dev/null; then
+            ollama run "$model" "$full_prompt"
+            return
+        else
+            local escaped_prompt
+            escaped_prompt=$(printf '%s' "$full_prompt" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' 2>/dev/null || printf '"%s"' "$full_prompt")
+            curl -s http://localhost:11434/api/generate \
+                -H "Content-Type: application/json" \
+                -d "{\"model\":\"$model\",\"prompt\":$escaped_prompt,\"stream\":false}" | \
+                grep -o '"response":"[^"]*"' | cut -d: -f2- | tr -d '"'
+            return
+        fi
+    fi
+
+    # 2. OpenAI
+    if [[ -n "$OPENAI_API_KEY" ]]; then
+        local escaped_prompt
+        escaped_prompt=$(printf '%s' "$full_prompt" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' 2>/dev/null || printf '"%s"' "$full_prompt")
+        curl -s https://api.openai.com/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -d "{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"user\",\"content\":$escaped_prompt}]}" | \
+            grep -o '"content":"[^"]*"' | head -1 | cut -d: -f2- | tr -d '"'
+        return
+    fi
+
+    # 3. Gemini
+    if [[ -n "$GEMINI_API_KEY" ]]; then
+        local escaped_prompt
+        escaped_prompt=$(printf '%s' "$full_prompt" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' 2>/dev/null || printf '"%s"' "$full_prompt")
+        curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"contents\":[{\"parts\":[{\"text\":$escaped_prompt}]}]}" | \
+            grep -o '"text":"[^"]*"' | head -1 | cut -d: -f2- | tr -d '"'
+        return
+    fi
+
+    echo "⚠️  No AI provider configured."
+    echo "    Either start Ollama locally (http://localhost:11434) or export OPENAI_API_KEY / GEMINI_API_KEY."
+    return 1
+}
+
+# Generate a conventional commit message from staged changes using AI
+# Usage: gcommit-ai (or gai)
+gcommit-ai() {
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        echo "Not inside a git repository."
+        return 1
+    fi
+    local diff
+    diff=$(git diff --cached)
+    if [[ -z "$diff" ]]; then
+        echo "⚠️  No staged changes found. Stage files with 'git add' first."
+        return 1
+    fi
+    echo "Analyzing staged diff with AI..."
+    local prompt="You are a git assistant. Generate a concise, single-line conventional commit message (e.g. feat(auth): add login form, fix: handle null pointer). Return ONLY the commit message line, without quotes, backticks, or explanation."$'\n\n'"Diff:"$'\n'"$diff"
+    local msg
+    msg=$(ai "$prompt")
+    [[ -z "$msg" ]] && return 1
+    msg="${msg#\"}"; msg="${msg%\"}"; msg="${msg#\'}"; msg="${msg%\'}"
+    echo ""
+    echo "Proposed commit message:"
+    echo "  $msg"
+    echo ""
+    printf "Commit with this message? [y]es / [n]o / [e]dit: "
+    local choice
+    read -r choice
+    case "$choice" in
+        y|yes|Y)
+            git commit -m "$msg"
+            ;;
+        e|edit|E)
+            printf "Enter commit message: "
+            local custom
+            read -r custom
+            [[ -n "$custom" ]] && git commit -m "$custom"
+            ;;
+        *)
+            echo "Commit aborted."
+            ;;
+    esac
+}
+gai() { gcommit-ai "$@"; }
+
+# List running Ollama models and VRAM usage
+# Usage: ollamals
+ollamals() {
+    if command -v ollama &>/dev/null; then
+        ollama ps
+        return
+    fi
+    if curl -s --connect-timeout 1 http://localhost:11434/api/ps >/dev/null 2>&1; then
+        curl -s http://localhost:11434/api/ps
+    else
+        echo "⚠️  Ollama server is not reachable on http://localhost:11434"
+        return 1
+    fi
+}
+
+# Stop or unload a running Ollama model
+# Usage: ollamastop [model]
+ollamastop() {
+    local model="$1"
+    if [[ -z "$model" ]]; then
+        if command -v ollama &>/dev/null; then
+            local running
+            running=$(ollama ps | tail -n +2)
+            if [[ -z "$running" ]]; then
+                echo "No Ollama models running."
+                return 0
+            fi
+            if command -v fzf &>/dev/null; then
+                model=$(echo "$running" | fzf | awk '{print $1}')
+            else
+                echo "$running"
+                printf "Model to stop: "
+                read -r model
+            fi
+        fi
+    fi
+    [[ -z "$model" ]] && return 0
+    if command -v ollama &>/dev/null; then
+        ollama stop "$model"
+    else
+        curl -s -X POST http://localhost:11434/api/generate \
+            -H "Content-Type: application/json" \
+            -d "{\"model\":\"$model\",\"keep_alive\":0}" >/dev/null
+    fi
+    echo "Stopped model: $model"
+}
+
+# Check CORS response headers for a URL
+# Usage: corscheck <url> [origin]
+corscheck() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: corscheck <url> [origin]"
+        return 1
+    fi
+    local url="$1"
+    local origin="${2:-https://example.com}"
+    echo "Checking CORS for: $url (Origin: $origin)"
+    curl -s -I -X OPTIONS "$url" \
+        -H "Origin: $origin" \
+        -H "Access-Control-Request-Method: GET" 2>&1 | \
+        grep -iE '(HTTP/|access-control)' || echo "No CORS headers returned."
+}
+
+# Show human-readable time remaining for a JWT token
+# Usage: jwtexpire <token>
+jwtexpire() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: jwtexpire <token>"
+        return 1
+    fi
+    local token="$1"
+    local payload
+    payload=$(echo "$token" | cut -d. -f2)
+    [[ -z "$payload" ]] && { echo "Invalid JWT format."; return 1; }
+    local pad=$(( (4 - ${#payload} % 4) % 4 ))
+    local padstr=""
+    [[ $pad -gt 0 ]] && printf -v padstr '%*s' "$pad" ''
+    payload="${payload//-/+}"
+    payload="${payload//_//}${padstr// /=}"
+    local json
+    json=$(echo "$payload" | base64 --decode 2>/dev/null || echo "$payload" | openssl base64 -d -A 2>/dev/null)
+    local exp
+    exp=$(echo "$json" | grep -o '"exp":[0-9]*' | cut -d: -f2)
+    if [[ -z "$exp" ]]; then
+        echo "No 'exp' claim found in JWT payload."
+        return 1
+    fi
+    local now
+    now=$(date +%s)
+    local diff=$(( exp - now ))
+    if [[ $diff -gt 0 ]]; then
+        local d=$(( diff / 86400 ))
+        local h=$(( (diff % 86400) / 3600 ))
+        local m=$(( (diff % 3600) / 60 ))
+        echo "Valid — expires in ${d}d ${h}h ${m}m (epoch $exp)"
+    else
+        local ad=$(( -diff ))
+        local d=$(( ad / 86400 ))
+        local h=$(( (ad % 86400) / 3600 ))
+        local m=$(( (ad % 3600) / 60 ))
+        echo "Expired — expired ${d}d ${h}h ${m}m ago (epoch $exp)"
+    fi
+}
+
+# Spin up a temporary local HTTP listener that dumps incoming webhooks
+# Usage: webhook-dump [port]
+webhook-dump() {
+    local port="${1:-8080}"
+    echo "Listening for webhooks on http://localhost:${port}/ (Press Ctrl+C to stop)..."
+    if command -v python3 &>/dev/null; then
+        python3 -c "
+import sys
+from http.server import HTTPServer, BaseHTTPRequestHandler
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self): self.dump()
+    def do_POST(self): self.dump()
+    def do_PUT(self): self.dump()
+    def do_DELETE(self): self.dump()
+    def dump(self):
+        length = int(self.headers.get('content-length', 0))
+        body = self.rfile.read(length).decode('utf-8', errors='replace') if length else ''
+        print(f'\n[{self.command}] {self.path}')
+        print('Headers:')
+        for k, v in self.headers.items(): print(f'  {k}: {v}')
+        if body: print('Body:\n' + body)
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(b'{\"status\":\"received\"}')
+try:
+    HTTPServer(('', int(sys.argv[1])), Handler).serve_forever()
+except KeyboardInterrupt:
+    pass
+" "$port"
+    else
+        echo "Python 3 required for webhook-dump on Unix."
+        return 1
+    fi
+}
+
+# Kill common rogue dev server ports
+# Usage: killdev [extra-ports...]
+killdev() {
+    local ports=(3000 3001 5173 8000 8080 "$@")
+    echo "Checking dev ports: ${ports[*]}..."
+    for p in "${ports[@]}"; do
+        killport "$p"
+    done
+}
+
+# Clean heavy developer caches across local projects and tooling
+# Usage: devclean
+devclean() {
+    echo "Scanning for dev caches in current directory..."
+    local nm
+    nm=$(find . -maxdepth 3 -type d -name "node_modules" 2>/dev/null)
+    if [[ -n "$nm" ]]; then
+        echo "Found node_modules folder(s):"
+        echo "$nm"
+        printf "Remove these node_modules? (y/N): "
+        local c; read -r c
+        [[ "$c" == "y" || "$c" == "yes" ]] && rm -rf $nm && echo "Removed node_modules."
+    fi
+    local pyc
+    pyc=$(find . -maxdepth 3 -type d -name "__pycache__" 2>/dev/null)
+    if [[ -n "$pyc" ]]; then
+        echo "Found __pycache__ folder(s)."
+        printf "Remove __pycache__ folders? (y/N): "
+        local c; read -r c
+        [[ "$c" == "y" || "$c" == "yes" ]] && rm -rf $pyc && echo "Removed __pycache__."
+    fi
+    if command -v docker &>/dev/null; then
+        printf "Prune Docker dangling images and build cache? (y/N): "
+        local c; read -r c
+        [[ "$c" == "y" || "$c" == "yes" ]] && docker image prune -f && docker builder prune -f
+    fi
+    echo "Done cleaning dev caches."
+}
+
+# Safe project-wide find and replace across text files
+# Usage: findreplace <find> <replace> [dir]
+findreplace() {
+    if [[ -z "$1" || -z "$2" ]]; then
+        echo "Usage: findreplace <find> <replace> [dir]"
+        return 1
+    fi
+    local find_str="$1"
+    local replace_str="$2"
+    local dir="${3:-.}"
+    local matches
+    matches=$(grep -rInl --exclude-dir={.git,node_modules,dist,build,.venv} "$find_str" "$dir" 2>/dev/null)
+    if [[ -z "$matches" ]]; then
+        echo "No matches found for '$find_str'."
+        return 0
+    fi
+    echo "Found '$find_str' in:"
+    echo "$matches"
+    printf "Replace all occurrences with '%s'? (y/N): " "$replace_str"
+    local confirm; read -r confirm
+    [[ "$confirm" != "y" && "$confirm" != "yes" ]] && { echo "Aborted."; return 0; }
+    while IFS= read -r f; do
+        [[ -f "$f" ]] && (sed -i "s/$find_str/$replace_str/g" "$f" 2>/dev/null || sed -i '' "s/$find_str/$replace_str/g" "$f" 2>/dev/null)
+    done <<< "$matches"
+    echo "Replaced in matched files."
+}
+
+# Convert any text into a clean URL or branch slug
+# Usage: slugify "<string>"
+slugify() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: slugify <string>"
+        return 1
+    fi
+    local s="$*"
+    echo "$s" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9 _-]//g' | sed -E 's/[ _]+/-/g' | sed -E 's/-+/-/g' | sed -E 's/^-+|-+$//g'
+}
+
+# Line count statistics grouped by file extension
+# Usage: codestats [dir]
+codestats() {
+    local dir="${1:-.}"
+    echo "Analyzing code stats in $dir..."
+    if command -v python3 &>/dev/null; then
+        python3 -c "
+import os, sys
+exts = {}
+excludes = {'.git', 'node_modules', 'dist', 'build', '.venv'}
+for root, dirs, files in os.walk(sys.argv[1] if len(sys.argv)>1 else '.'):
+    dirs[:] = [d for d in dirs if d not in excludes]
+    for f in files:
+        _, ext = os.path.splitext(f)
+        if ext and len(ext) < 8:
+            p = os.path.join(root, f)
+            try:
+                with open(p, 'rb') as fp:
+                    lines = sum(1 for _ in fp)
+                c, l = exts.get(ext, (0, 0))
+                exts[ext] = (c + 1, l + lines)
+            except: pass
+print(f'{\"EXTENSION\":<12} {\"FILES\":<8} {\"LINES\":<10}')
+print(f'{\"---------\":<12} {\"-----\":<8} {\"-----\":<10}')
+for ext, (c, l) in sorted(exts.items(), key=lambda x: x[1][1], reverse=True)[:15]:
+    print(f'{ext:<12} {c:<8} {l:<10}')
+" "$dir"
+    else
+        find "$dir" -not -path '*/.*' -type f | sed -n 's/..*\.//p' | sort | uniq -c | sort -rn | head -15
+    fi
+}
+
+# Deduplicate and clean non-existent directories from PATH
+# Usage: pathclean
+pathclean() {
+    local old_path="$PATH"
+    local new_path=""
+    local seen=":"
+    local dups=0 nonexist=0
+    local d
+    while IFS= read -r d; do
+        [[ -z "$d" ]] && continue
+        if [[ ! -d "$d" ]]; then
+            (( nonexist++ ))
+            continue
+        fi
+        if [[ "$seen" == *":$d:"* ]]; then
+            (( dups++ ))
+            continue
+        fi
+        seen="${seen}${d}:"
+        new_path="${new_path:+${new_path}:}${d}"
+    done < <(echo "$old_path" | tr ':' '\n')
+    export PATH="$new_path"
+    echo "PATH cleaned: removed $dups duplicate(s), $nonexist non-existent folder(s)."
+}
+
+#########################################################################
 # 13. ORCHESTRATOR — HUD, catalog, doctor
 # Registry fields (caret-delimited): category^name^description^usage^deps
 #########################################################################
@@ -4001,6 +4389,20 @@ _SHARMORY_REGISTRY=(
     'meta^sharmory-setup^Install optional CLI tools (fzf, jq, ...)^sharmory-setup^'
     'meta^sharmory-bench^Measure Sharmory source time in a clean shell^sharmory-bench [runs]^'
     'meta^sharmory-update^Download the latest Sharmory from GitHub^sharmory-update^'
+    'ai^ai^Prompt local Ollama or OpenAI/Gemini API (supports pipes)^ai <prompt>^curl'
+    'ai^gcommit-ai^Generate a conventional commit message from staged diff^gcommit-ai^git'
+    'ai^gai^Shortcut for gcommit-ai^gai^git'
+    'ai^ollamals^List running Ollama models and VRAM usage^ollamals^'
+    'ai^ollamastop^Unload/stop a running Ollama model^ollamastop [model]^'
+    'net^corscheck^Check CORS response headers for a URL^corscheck <url> [origin]^curl'
+    'security^jwtexpire^Show human-readable time remaining for a JWT^jwtexpire <token>^'
+    'net^webhook-dump^Spin up a local HTTP listener to dump incoming webhooks^webhook-dump [port]^'
+    'net^killdev^Kill common dev server ports (3000, 3001, 5173, 8000, 8080)^killdev [extra-ports...]^'
+    'dev^devclean^Clean heavy dev caches (node_modules, pycache, docker, pkg)^devclean^'
+    'dev^findreplace^Safe find and replace across text files with preview^findreplace <find> <replace> [dir]^'
+    'prod^slugify^Convert text to a clean URL/branch slug^slugify <text>^'
+    'prod^codestats^Line count statistics grouped by file extension^codestats [dir]^'
+    'prod^pathclean^Deduplicate and clean non-existent directories from PATH^pathclean^'
 )
 
 _sharmory_parse_row() {
@@ -4050,7 +4452,7 @@ Usage: sharmory [list|help|run|doctor|setup|bench] [args]
   sharmory setup              Install optional CLI tools (fzf, jq, eza, tldr)
   sharmory bench [n]          Source-time benchmark (default 10 runs)
 
-Categories: files git docker k8s go node python net security system prod jenkins ruby java db dev react cron api env meta
+Categories: files git docker k8s go node python net security system prod jenkins ruby java db dev react cron api env ai meta
 EOF
 }
 

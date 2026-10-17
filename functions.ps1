@@ -3280,6 +3280,413 @@ function sharmory-update {
 }
 
 #########################################################################
+# 12j. AI & DEVELOPER PRODUCTIVITY HELPERS
+#########################################################################
+
+# Prompt local Ollama or OpenAI/Gemini API (supports pipeline)
+# Usage: ai <prompt> | cat log.txt | ai "explain"
+function ai {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$PromptArgs
+    )
+    $inputPiped = ""
+    if ($input) {
+        $inputPiped = ($input | Out-String).Trim()
+    }
+    $query = ($PromptArgs -join " ").Trim()
+    if ($inputPiped -and $query) {
+        $fullPrompt = "$query`n`nContext:`n$inputPiped"
+    } elseif ($inputPiped) {
+        $fullPrompt = $inputPiped
+    } elseif ($query) {
+        $fullPrompt = $query
+    } else {
+        Write-Host "Usage: ai <prompt>  or  cat file.txt | ai <instructions>"
+        return
+    }
+
+    # 1. Local Ollama check
+    $ollamaRunning = $false
+    try {
+        $tags = Invoke-RestMethod -Uri "http://localhost:11434/api/tags" -Method Get -TimeoutSec 1 -ErrorAction Stop
+        $ollamaRunning = $true
+    } catch { }
+
+    if ($ollamaRunning) {
+        $model = if ($env:OLLAMA_MODEL) { $env:OLLAMA_MODEL } `
+                 elseif ($tags.models -and $tags.models.Count -gt 0) { $tags.models[0].name } `
+                 else { "llama3.2" }
+        $body = @{ model = $model; prompt = $fullPrompt; stream = $false } | ConvertTo-Json
+        try {
+            $resp = Invoke-RestMethod -Uri "http://localhost:11434/api/generate" -Method Post -Body $body -ContentType "application/json" -TimeoutSec 60
+            if ($resp -and $resp.response) {
+                $resp.response.Trim()
+            }
+            return
+        } catch {
+            Write-Warning "Ollama failed: $($_.Exception.Message)"
+        }
+    }
+
+    # 2. OpenAI check
+    if ($env:OPENAI_API_KEY) {
+        $body = @{
+            model = "gpt-4o-mini"
+            messages = @(@{ role = "user"; content = $fullPrompt })
+        } | ConvertTo-Json
+        try {
+            $resp = Invoke-RestMethod -Uri "https://api.openai.com/v1/chat/completions" -Method Post `
+                -Headers @{ Authorization = "Bearer $env:OPENAI_API_KEY" } `
+                -Body $body -ContentType "application/json" -TimeoutSec 30
+            if ($resp -and $resp.choices -and $resp.choices.Count -gt 0 -and $resp.choices[0].message) {
+                $resp.choices[0].message.content.Trim()
+            }
+            return
+        } catch {
+            Write-Warning "OpenAI failed: $($_.Exception.Message)"
+        }
+    }
+
+    # 3. Gemini check
+    if ($env:GEMINI_API_KEY) {
+        $body = @{
+            contents = @(@{ parts = @(@{ text = $fullPrompt }) })
+        } | ConvertTo-Json -Depth 5
+        try {
+            $resp = Invoke-RestMethod -Uri "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$env:GEMINI_API_KEY" `
+                -Method Post -Body $body -ContentType "application/json" -TimeoutSec 30
+            if ($resp -and $resp.candidates -and $resp.candidates.Count -gt 0 -and $resp.candidates[0].content) {
+                $resp.candidates[0].content.parts[0].text.Trim()
+            }
+            return
+        } catch {
+            Write-Warning "Gemini failed: $($_.Exception.Message)"
+        }
+    }
+
+    Write-Host "[!] No AI provider configured." -ForegroundColor Yellow
+    Write-Host "    Either start Ollama locally (http://localhost:11434) or set `$env:OPENAI_API_KEY / `$env:GEMINI_API_KEY."
+}
+
+# Generate a conventional commit message from staged changes using AI
+# Usage: gcommit-ai (or gai)
+function gcommit-ai {
+    if (-not (git rev-parse --is-inside-work-tree 2>$null)) {
+        Write-Host "Not inside a git repository." -ForegroundColor Red
+        return
+    }
+    $diff = git diff --cached
+    if (-not $diff) {
+        Write-Host "[!] No staged changes found. Stage files with 'git add' first." -ForegroundColor Yellow
+        return
+    }
+    Write-Host "Analyzing staged diff with AI..." -ForegroundColor Cyan
+    $prompt = "You are a git assistant. Generate a concise, single-line conventional commit message (e.g. feat(auth): add login form, fix: handle null pointer). Return ONLY the commit message line, without quotes, backticks, or explanation.`n`nDiff:`n$diff"
+    $msg = ai $prompt
+    if (-not $msg) { return }
+    $msg = $msg.Trim("`"").Trim("'").Trim("`r").Trim("`n")
+    Write-Host ""
+    Write-Host "Proposed commit message:" -ForegroundColor Cyan
+    Write-Host "  $msg" -ForegroundColor Green
+    Write-Host ""
+    $choice = Read-Host "Commit with this message? [y]es / [n]o / [e]dit"
+    if ($choice -eq "y" -or $choice -eq "yes") {
+        git commit -m $msg
+    } elseif ($choice -eq "e" -or $choice -eq "edit") {
+        $custom = Read-Host "Enter commit message"
+        if ($custom) { git commit -m $custom }
+    } else {
+        Write-Host "Commit aborted."
+    }
+}
+function gai { gcommit-ai @args }
+
+# List running Ollama models and VRAM usage
+# Usage: ollamals
+function ollamals {
+    if (Get-Command ollama -ErrorAction SilentlyContinue) {
+        ollama ps
+        return
+    }
+    try {
+        $res = Invoke-RestMethod -Uri "http://localhost:11434/api/ps" -Method Get -TimeoutSec 2 -ErrorAction Stop
+        if (-not $res.models -or $res.models.Count -eq 0) {
+            Write-Host "No Ollama models currently loaded."
+            return
+        }
+        $res.models | Format-Table name, size, size_vram, expires_at -AutoSize
+    } catch {
+        Write-Host "Ollama server is not reachable on http://localhost:11434" -ForegroundColor Yellow
+    }
+}
+
+# Stop or unload a running Ollama model
+# Usage: ollamastop [model]
+function ollamastop {
+    param([string]$Model)
+    if (-not $Model) {
+        if (Get-Command ollama -ErrorAction SilentlyContinue) {
+            $lines = ollama ps | Select-Object -Skip 1
+            if (-not $lines) { Write-Host "No models running."; return }
+            if (Get-Command fzf -ErrorAction SilentlyContinue) {
+                $pick = $lines | fzf --prompt="Stop model> "
+                if ($pick) { $Model = ($pick -split '\s+')[0] }
+            } else {
+                Write-Host "Running models:"
+                $lines | ForEach-Object { Write-Host "  $_" }
+                $Model = Read-Host "Model to stop"
+            }
+        }
+    }
+    if (-not $Model) { return }
+    if (Get-Command ollama -ErrorAction SilentlyContinue) {
+        ollama stop $Model
+    } else {
+        $body = @{ model = $Model; keep_alive = 0 } | ConvertTo-Json
+        Invoke-RestMethod -Uri "http://localhost:11434/api/generate" -Method Post -Body $body -ContentType "application/json" | Out-Null
+    }
+    Write-Host "Stopped model: $Model" -ForegroundColor Green
+}
+
+# Check CORS response headers for a URL
+# Usage: corscheck <url> [origin]
+function corscheck {
+    param(
+        [Parameter(Mandatory = $true, Position = 0)][string]$Url,
+        [string]$Origin = "https://example.com"
+    )
+    Write-Host "Checking CORS for: $Url (Origin: $Origin)" -ForegroundColor Cyan
+    try {
+        $req = [System.Net.WebRequest]::Create($Url)
+        $req.Method = "OPTIONS"
+        $req.Headers.Add("Origin", $Origin)
+        $req.Headers.Add("Access-Control-Request-Method", "GET")
+        $req.Timeout = 10000
+        $res = $req.GetResponse()
+    } catch [System.Net.WebException] {
+        $res = $_.Exception.Response
+    } catch {
+        Write-Host "Failed to connect to ${Url}: $($_.Exception.Message)" -ForegroundColor Red
+        return
+    }
+    if ($res -and $res.Headers) {
+        $corsHeaders = @()
+        foreach ($key in $res.Headers.AllKeys) {
+            if ($key -match '^Access-Control-') {
+                $corsHeaders += [pscustomobject]@{ Header = $key; Value = $res.Headers[$key] }
+            }
+        }
+        if ($corsHeaders.Count -gt 0) {
+            Write-Host "CORS headers detected:" -ForegroundColor Green
+            $corsHeaders | Format-Table -AutoSize
+        } else {
+            Write-Host "No Access-Control-* headers returned by server." -ForegroundColor Yellow
+        }
+    }
+}
+
+# Show human-readable time remaining for a JWT token
+# Usage: jwtexpire <token>
+function jwtexpire {
+    param([Parameter(Mandatory = $true, Position = 0)][string]$Token)
+    $parts = $Token.Split('.')
+    if ($parts.Count -lt 2) {
+        Write-Host "Invalid JWT format (expected header.payload.signature)." -ForegroundColor Red
+        return
+    }
+    $payload = $parts[1].Replace('-', '+').Replace('_', '/')
+    switch ($payload.Length % 4) { 2 { $payload += '==' } 3 { $payload += '=' } }
+    try {
+        $bytes = [Convert]::FromBase64String($payload)
+        $json = [System.Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json
+    } catch {
+        Write-Host "Could not decode JWT payload." -ForegroundColor Red
+        return
+    }
+    if (-not $json.exp) {
+        Write-Host "No 'exp' claim found in JWT payload." -ForegroundColor Yellow
+        return
+    }
+    $expDate = [DateTimeOffset]::FromUnixTimeSeconds([long]$json.exp).LocalDateTime
+    $now = [DateTime]::Now
+    $diff = $expDate - $now
+    if ($diff.TotalSeconds -gt 0) {
+        Write-Output ("Valid -- expires in {0}d {1}h {2}m (at {3})" -f $diff.Days, $diff.Hours, $diff.Minutes, $expDate.ToString("yyyy-MM-dd HH:mm:ss"))
+    } else {
+        $diff = $diff.Duration()
+        Write-Output ("Expired -- expired {0}d {1}h {2}m ago (at {3})" -f $diff.Days, $diff.Hours, $diff.Minutes, $expDate.ToString("yyyy-MM-dd HH:mm:ss"))
+    }
+}
+
+# Spin up a temporary local HTTP listener that dumps incoming webhooks
+# Usage: webhook-dump [port]
+function webhook-dump {
+    param([int]$Port = 8080)
+    $prefix = "http://localhost:$Port/"
+    $listener = New-Object System.Net.HttpListener
+    try {
+        $listener.Prefixes.Add($prefix)
+        $listener.Start()
+    } catch {
+        Write-Host "Failed to start listener on ${prefix}: $($_.Exception.Message)" -ForegroundColor Red
+        return
+    }
+    Write-Host "Listening for webhooks on $prefix (Press Ctrl+C to stop)..." -ForegroundColor Cyan
+    try {
+        while ($listener.IsListening) {
+            $context = $listener.GetContext()
+            $req = $context.Request
+            Write-Host "`n[$([DateTime]::Now.ToString('HH:mm:ss'))] $($req.HttpMethod) $($req.Url.PathAndQuery)" -ForegroundColor Green
+            Write-Host "Headers:" -ForegroundColor DarkGray
+            foreach ($h in $req.Headers.AllKeys) {
+                Write-Host "  ${h}: $($req.Headers[$h])" -ForegroundColor DarkGray
+            }
+            if ($req.HasEntityBody) {
+                $reader = New-Object System.IO.StreamReader($req.InputStream, $req.ContentEncoding)
+                $body = $reader.ReadToEnd()
+                Write-Host "Body:" -ForegroundColor Cyan
+                Write-Host $body
+            }
+            $response = $context.Response
+            $respBytes = [System.Text.Encoding]::UTF8.GetBytes('{"status":"received"}')
+            $response.ContentType = "application/json"
+            $response.ContentLength64 = $respBytes.Length
+            $response.OutputStream.Write($respBytes, 0, $respBytes.Length)
+            $response.Close()
+        }
+    } finally {
+        $listener.Stop()
+        $listener.Close()
+        Write-Host "`nStopped webhook listener."
+    }
+}
+
+# Kill common rogue dev server ports
+# Usage: killdev [extra-ports...]
+function killdev {
+    param([Parameter(ValueFromRemainingArguments = $true)][int[]]$ExtraPorts)
+    $ports = @(3000, 3001, 5173, 8000, 8080)
+    if ($ExtraPorts) { $ports += $ExtraPorts }
+    $ports = $ports | Select-Object -Unique
+    Write-Host "Checking dev ports: $($ports -join ', ')..." -ForegroundColor Cyan
+    foreach ($p in $ports) {
+        killport $p
+    }
+}
+
+# Clean heavy developer caches across local projects and tooling
+# Usage: devclean
+function devclean {
+    Write-Host "Scanning for dev caches in current directory..." -ForegroundColor Cyan
+    $nm = Get-ChildItem -Directory -Recurse -Depth 3 -Filter "node_modules" -ErrorAction SilentlyContinue
+    if ($nm) {
+        Write-Host "`nFound $($nm.Count) node_modules folder(s):" -ForegroundColor Yellow
+        $nm | ForEach-Object { Write-Host "  $($_.FullName)" }
+        $c = Read-Host "Remove these node_modules? (y/N)"
+        if ($c -eq "y") { $nm | Remove-Item -Recurse -Force; Write-Host "Removed node_modules." -ForegroundColor Green }
+    }
+    $pyc = Get-ChildItem -Directory -Recurse -Depth 3 -Filter "__pycache__" -ErrorAction SilentlyContinue
+    if ($pyc) {
+        Write-Host "`nFound $($pyc.Count) __pycache__ folder(s):" -ForegroundColor Yellow
+        $c = Read-Host "Remove __pycache__ folders? (y/N)"
+        if ($c -eq "y") { $pyc | Remove-Item -Recurse -Force; Write-Host "Removed __pycache__." -ForegroundColor Green }
+    }
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        $c = Read-Host "`nPrune Docker dangling images and build cache? (y/N)"
+        if ($c -eq "y") { docker image prune -f; docker builder prune -f }
+    }
+    Write-Host "`nDone cleaning dev caches." -ForegroundColor Green
+}
+
+# Safe project-wide find and replace across text files
+# Usage: findreplace <find> <replace> [dir]
+function findreplace {
+    param(
+        [Parameter(Mandatory = $true, Position = 0)][string]$Find,
+        [Parameter(Mandatory = $true, Position = 1)][string]$Replace,
+        [Parameter(Position = 2)][string]$Path = "."
+    )
+    $files = Get-ChildItem $Path -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+        $_.FullName -notmatch '[\\/](\.git|node_modules|dist|build|\.venv)[\\/]'
+    }
+    $matched = @()
+    foreach ($f in $files) {
+        $content = Get-Content $f.FullName -Raw -ErrorAction SilentlyContinue
+        if ($content -and $content.Contains($Find)) {
+            $matched += $f
+        }
+    }
+    if ($matched.Count -eq 0) {
+        Write-Host "No matches found for '$Find'." -ForegroundColor Yellow
+        return
+    }
+    Write-Host "Found '$Find' in $($matched.Count) file(s):" -ForegroundColor Cyan
+    $matched | ForEach-Object { Write-Host "  $($_.FullName)" }
+    $confirm = Read-Host "Replace all occurrences with '$Replace'? (y/N)"
+    if ($confirm -ne "y") { Write-Host "Aborted."; return }
+    foreach ($f in $matched) {
+        $content = Get-Content $f.FullName -Raw
+        $newContent = $content.Replace($Find, $Replace)
+        [System.IO.File]::WriteAllText($f.FullName, $newContent, [System.Text.Encoding]::UTF8)
+    }
+    Write-Host "Replaced in $($matched.Count) file(s)." -ForegroundColor Green
+}
+
+# Convert any text into a clean URL or branch slug
+# Usage: slugify "<string>"
+function slugify {
+    param([Parameter(Mandatory = $true, Position = 0)][string]$Text)
+    $slug = ($Text.ToLower() -replace '[^a-z0-9\s-]', '' -replace '[\s_]+', '-' -replace '-+', '-').Trim('-')
+    $slug
+}
+
+# Line count statistics grouped by file extension
+# Usage: codestats [dir]
+function codestats {
+    param([string]$Path = ".")
+    $files = Get-ChildItem $Path -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+        $_.FullName -notmatch '[\\/](\.git|node_modules|dist|build|\.venv)[\\/]' -and $_.Extension
+    }
+    if (-not $files) { Write-Host "No code files found."; return }
+    $stats = $files | Group-Object Extension | ForEach-Object {
+        $ext = $_.Name
+        $cnt = $_.Count
+        $lines = 0
+        foreach ($f in $_.Group) {
+            $lines += (Get-Content $f.FullName -ReadCount 0 -ErrorAction SilentlyContinue).Count
+        }
+        [pscustomobject]@{ Extension = $ext; Files = $cnt; Lines = $lines }
+    } | Sort-Object Lines -Descending
+    Write-Host ("{0,-12} {1,-8} {2,-10}" -f "EXTENSION", "FILES", "LINES")
+    Write-Host ("{0,-12} {1,-8} {2,-10}" -f "---------", "-----", "-----")
+    $totalLines = 0; $totalFiles = 0
+    foreach ($s in $stats) {
+        Write-Host ("{0,-12} {1,-8} {2,-10}" -f $s.Extension, $s.Files, $s.Lines)
+        $totalLines += $s.Lines; $totalFiles += $s.Files
+    }
+    Write-Host ("{0,-12} {1,-8} {2,-10}" -f "TOTAL", $totalFiles, $totalLines) -ForegroundColor Cyan
+}
+
+# Deduplicate and clean non-existent directories from PATH
+# Usage: pathclean
+function pathclean {
+    $sep = [System.IO.Path]::PathSeparator
+    $dirs = $env:PATH -split [regex]::Escape($sep)
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $valid = [System.Collections.Generic.List[string]]::new()
+    $removedDup = 0; $removedNonExist = 0
+    foreach ($d in $dirs) {
+        if ([string]::IsNullOrWhiteSpace($d)) { continue }
+        $trimmed = $d.Trim()
+        if (-not (Test-Path $trimmed)) { $removedNonExist++; continue }
+        if ($seen.Add($trimmed)) { $valid.Add($trimmed) } else { $removedDup++ }
+    }
+    $env:PATH = $valid -join $sep
+    Write-Host "PATH cleaned: removed $removedDup duplicate(s), $removedNonExist non-existent folder(s)." -ForegroundColor Green
+}
+
+#########################################################################
 # 13. ORCHESTRATOR — HUD, catalog, doctor
 #########################################################################
 
@@ -3530,6 +3937,20 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "meta"; Name = "sharmory-setup"; Description = "Install optional CLI tools (fzf, jq, ...)"; Usage = "sharmory-setup"; Deps = "" }
         [pscustomobject]@{ Category = "meta"; Name = "sharmory-bench"; Description = "Measure Sharmory source time in a clean shell"; Usage = "sharmory-bench [runs]"; Deps = "" }
         [pscustomobject]@{ Category = "meta"; Name = "sharmory-update"; Description = "Download the latest Sharmory from GitHub"; Usage = "sharmory-update"; Deps = "" }
+        [pscustomobject]@{ Category = "ai"; Name = "ai"; Description = "Prompt local Ollama or OpenAI/Gemini API"; Usage = "ai <prompt> | cat file | ai <prompt>"; Deps = "curl" }
+        [pscustomobject]@{ Category = "ai"; Name = "gcommit-ai"; Description = "Generate conventional commit message via AI"; Usage = "gcommit-ai"; Deps = "git" }
+        [pscustomobject]@{ Category = "ai"; Name = "gai"; Description = "Shortcut for gcommit-ai"; Usage = "gai"; Deps = "git" }
+        [pscustomobject]@{ Category = "ai"; Name = "ollamals"; Description = "List running Ollama models and VRAM"; Usage = "ollamals"; Deps = "" }
+        [pscustomobject]@{ Category = "ai"; Name = "ollamastop"; Description = "Unload/stop a running Ollama model"; Usage = "ollamastop [model]"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "corscheck"; Description = "Check CORS response headers for a URL"; Usage = "corscheck <url> [origin]"; Deps = "" }
+        [pscustomobject]@{ Category = "security"; Name = "jwtexpire"; Description = "Show time remaining for a JWT token"; Usage = "jwtexpire <token>"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "webhook-dump"; Description = "Spin up HTTP listener to dump webhooks"; Usage = "webhook-dump [port]"; Deps = "" }
+        [pscustomobject]@{ Category = "net"; Name = "killdev"; Description = "Kill common dev ports (3000, 5173, 8000, 8080)"; Usage = "killdev [extra-ports...]"; Deps = "" }
+        [pscustomobject]@{ Category = "dev"; Name = "devclean"; Description = "Clean heavy dev caches (node_modules, pycache)"; Usage = "devclean"; Deps = "" }
+        [pscustomobject]@{ Category = "dev"; Name = "findreplace"; Description = "Safe find and replace across text files"; Usage = "findreplace <find> <replace> [dir]"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "slugify"; Description = "Convert text to clean URL or branch slug"; Usage = "slugify <text>"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "codestats"; Description = "Line count statistics by file extension"; Usage = "codestats [dir]"; Deps = "" }
+        [pscustomobject]@{ Category = "prod"; Name = "pathclean"; Description = "Deduplicate and clean PATH directories"; Usage = "pathclean"; Deps = "" }
     )
 }
 
@@ -3550,7 +3971,7 @@ Usage: sharmory [list|help|run|doctor|setup|bench] [args]
   sharmory setup              Install optional CLI tools (fzf, jq, eza, tldr)
   sharmory bench [n]          Source-time benchmark (default 10 runs)
 
-Categories: files git docker k8s go node python net security system prod jenkins ruby java db dev react cron api env meta
+Categories: files git docker k8s go node python net security system prod jenkins ruby java db dev react cron api env ai meta
 "@
 }
 

@@ -15,12 +15,19 @@ echo "⚔️  Installing Sharmory..."
 # Create the install directory
 mkdir -p "$TARGET_DIR"
 
-# Download both function files so whichever shell the user switches to later
+# Install both function files so whichever shell the user switches to later
 # is already in place.
-echo "📥 Downloading functions.zsh..."
-curl -fsSL "${REPO_URL}/functions.zsh"   -o "${TARGET_DIR}/functions.zsh"
-echo "📥 Downloading functions.bash..."
-curl -fsSL "${REPO_URL}/functions.bash"  -o "${TARGET_DIR}/functions.bash"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/functions.zsh" ] && [ -f "$SCRIPT_DIR/functions.bash" ]; then
+    echo "📦 Installing functions from local repository..."
+    cp "$SCRIPT_DIR/functions.zsh"  "${TARGET_DIR}/functions.zsh"
+    cp "$SCRIPT_DIR/functions.bash" "${TARGET_DIR}/functions.bash"
+else
+    echo "📥 Downloading functions.zsh..."
+    curl -fsSL "${REPO_URL}/functions.zsh"   -o "${TARGET_DIR}/functions.zsh"
+    echo "📥 Downloading functions.bash..."
+    curl -fsSL "${REPO_URL}/functions.bash"  -o "${TARGET_DIR}/functions.bash"
+fi
 
 # Detect which shell to configure.
 # Prefer Zsh if it is the user's login shell; fall back to Bash.
@@ -71,6 +78,15 @@ else
     echo "✅ Added Sharmory to $RC_FILE"
 fi
 
+count=0
+if [ -f "$FUNC_FILE" ]; then
+    count=$(grep -c "^    '" "$FUNC_FILE" 2>/dev/null || true)
+fi
+if [ -z "$count" ] || [ "$count" -eq 0 ]; then
+    count=259
+fi
+
 echo ""
 echo "✨ Sharmory successfully installed!"
+echo "All $count dev shortcuts are ready to use in your terminal."
 echo "👉 Run: $RELOAD_CMD (or open a new terminal) to activate."

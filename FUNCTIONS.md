@@ -6,6 +6,7 @@ All functions are available in Bash, Zsh, and PowerShell. Sorted alphabetically.
 
 | Function | Description | Usage |
 |---|---|---|
+| `ai` | Prompt local Ollama or OpenAI/Gemini API (pipe-friendly) | `ai <prompt>` or `cat file \| ai <prompt>` |
 | `alias-list` | List user-defined aliases in a clean aligned table | `alias-list [pattern]` |
 | `apidiff` | Diff two JSON API responses (URLs or local files) | `apidiff <a> <b>` |
 | `apihit` | GET a URL, pretty-print JSON response, show timing | `apihit <url> [curl-args...]` |
@@ -24,8 +25,10 @@ All functions are available in Bash, Zsh, and PowerShell. Sorted alphabetically.
 | `cheat` | Look up usage examples via tldr, fallback to man | `cheat <command>` |
 | `clip` | Copy stdin or a file to the clipboard (pipe-friendly) | `clip [file]` |
 | `clipcopy` | Copy a file's contents to the clipboard | `clipcopy <file>` |
+| `codestats` | Line count statistics grouped by file extension | `codestats [dir]` |
 | `colorconv` | Convert hex color to RGB or RGB to hex | `colorconv <#rrggbb>` or `colorconv <r> <g> <b>` |
 | `compress` | Compress a file or directory to .tar.gz, .tar.bz2, or .zip | `compress <output> <path>` |
+| `corscheck` | Check CORS preflight response headers for a URL | `corscheck <url> [origin]` |
 | `covreport` | Run tests with coverage and open the HTML report | `covreport` |
 | `cpu` | Snapshot of CPU and process activity | `cpu` |
 | `cpuwatch` | Live CPU load monitor, refreshes every second | `cpuwatch [interval-seconds]` |
@@ -39,6 +42,7 @@ All functions are available in Bash, Zsh, and PowerShell. Sorted alphabetically.
 | `cwd` | Copy the current working directory path to the clipboard | `cwd` |
 | `dbforward` | Port-forward to a picked k8s service with a connect hint | `dbforward <local-port> <remote-port>` |
 | `dbuild` | Build a Docker image (tag defaults to the directory name) | `dbuild [tag]` |
+| `devclean` | Interactively clean heavy dev caches (node_modules, pycache, docker) | `devclean` |
 | `dclean` | Prune all unused Docker data (containers, images, networks, cache) | `dclean` |
 | `dcdown` | Tear down docker-compose services | `dcdown` |
 | `dcup` | Bring up docker-compose services in the background | `dcup` |
@@ -74,10 +78,12 @@ All functions are available in Bash, Zsh, and PowerShell. Sorted alphabetically.
 | `fcd` | Fuzzy cd into a subdirectory | `fcd` |
 | `ffind` | Find files by name or search file contents for text | `ffind <text>` or `ffind -f <filename>` |
 | `findbig` | Find files above a given size (default 100M) | `findbig [size] [dir]` |
+| `findreplace` | Safe project-wide find and replace across text files with preview | `findreplace <find> <replace> [dir]` |
 | `fkill` | Fuzzy-pick a process and kill it | `fkill` |
 | `flushdns` | Flush the local DNS cache | `flushdns` |
 | `ftext` | Fuzzy-search file contents and open the match in $EDITOR | `ftext` |
 | `gacp` | git add + commit + push in one step (prompts on main/master) | `gacp <commit message>` |
+| `gai` | Shortcut for `gcommit-ai` | `gai` |
 | `gcamend` | Amend the last commit message without touching the stage | `gcamend <new message>` |
 | `gdiffstage` | Show what is currently staged (ready to commit) | `gdiffstage` |
 | `gemclean` | Uninstall old/duplicate gem versions, keeping only the latest of each | `gemclean` |
@@ -116,6 +122,7 @@ All functions are available in Bash, Zsh, and PowerShell. Sorted alphabetically.
 | `gradlesize` | Report size of the local Gradle cache | `gradlesize` |
 | `gcleanup` | Prune remotes, delete merged branches, tidy Go module | `gcleanup` |
 | `gclone` | Clone a repo and cd straight into it | `gclone <repo-url> [dir]` |
+| `gcommit-ai` | Generate conventional commit message from staged diff using AI | `gcommit-ai` |
 | `grebase` | Interactive rebase N commits back | `grebase [n]` |
 | `grecentbranch` | Recently checked-out branches from the reflog | `grecentbranch [n]` |
 | `greview` | Open the last open PR for the current branch in the browser | `greview` |
@@ -137,12 +144,14 @@ All functions are available in Bash, Zsh, and PowerShell. Sorted alphabetically.
 | `jenk-logs` | Fetch the console log of the last build | `jenk-logs <job-name>` |
 | `jsonpp` | Pretty-print a JSON file | `jsonpp <file>` |
 | `jwtdecode` | Decode a JWT header and payload (no signature verification) | `jwtdecode <token>` |
+| `jwtexpire` | Show human-readable time remaining for a JWT exp claim | `jwtexpire <token>` |
 | `k8sctx` | Fuzzy-switch kubectl context and namespace | `k8sctx` |
 | `kcopy` | Copy a file to/from a picked pod | `kcp <local-path> <pod-path>` |
 | `kdel` | Force-delete a picked (possibly stuck) pod | `kdel` |
 | `kdesc` | Fuzzy-pick a pod and run kubectl describe on it | `kdesc` |
 | `kevents` | Namespace events sorted by timestamp | `kevents` |
 | `kexec` | Fuzzy-pick a pod and exec a shell into it | `kexec` |
+| `killdev` | Kill common rogue dev server ports (3000, 3001, 5173, 8000, 8080) | `killdev [extra-ports...]` |
 | `killport` | Find and kill whatever process is listening on a port | `killport <port> [port ...]` |
 | `klogs` | Fuzzy-pick a pod and stream its logs | `klogs` |
 | `kns` | Set the current kubectl namespace without changing context | `kns <namespace>` |
@@ -183,10 +192,13 @@ All functions are available in Bash, Zsh, and PowerShell. Sorted alphabetically.
 | `npmwatch` | Watch files and re-run an npm script on change | `npmwatch [script]` |
 | `npxrun` | Run a package with npx | `npxrun <package> [args...]` |
 | `nvmuse` | Switch Node.js version via nvm or fnm | `nvmuse <version>` |
+| `ollamals` | List running Ollama models and VRAM usage | `ollamals` |
+| `ollamastop` | Stop or unload a running Ollama model (with fuzzy picker) | `ollamastop [model]` |
 | `openapipp` | Validate and lint an OpenAPI/Swagger spec with Redocly | `openapipp <spec-file>` |
 | `openat` | Open $EDITOR at a specific file and line | `openat <file>[:<line>]` |
 | `openports` | Listening ports flagged by network exposure (0.0.0.0 / ::) | `openports` |
 | `passgen` | Generate a random base64 password | `passgen [bytes]` |
+| `pathclean` | Deduplicate and remove non-existent directories from PATH | `pathclean` |
 | `permsof` | Show file permissions broken down by owner/group/other | `permsof <file>` |
 | `pgc` | Connect to Postgres using PG* env vars (or defaults) | `pgc` |
 | `pgdump` | Dump the current Postgres database to a timestamped .sql file | `pgdump <database>` |
@@ -222,6 +234,7 @@ All functions are available in Bash, Zsh, and PowerShell. Sorted alphabetically.
 | `serve` | Serve the current directory over HTTP | `serve [port]` |
 | `shorten` | Shorten a URL using is.gd | `shorten <url>` |
 | `sizeof` | Sizes of subdirectories under a path, largest first | `sizeof [path]` |
+| `slugify` | Convert any text into a clean URL or git branch slug | `slugify "<text>"` |
 | `speed` | Internet speed test (speedtest-cli, fast, or curl fallback) | `speed` |
 | `sshconfig` | List all Host entries from ~/.ssh/config | `sshconfig` |
 | `sshcopy` | Copy your SSH public key to a remote host's authorized_keys | `sshcopy <user@host> [identity-file]` |
@@ -247,6 +260,7 @@ All functions are available in Bash, Zsh, and PowerShell. Sorted alphabetically.
 | `vitelint` | Run ESLint + Prettier check + TypeScript typecheck in one pass | `vitelint [--fix]` |
 | `watchrun` | Re-run a command whenever a path changes | `watchrun <path> -- <command...>` |
 | `weather` | Weather for a location via wttr.in | `weather [location]` |
+| `webhook-dump` | Spin up a temporary local HTTP listener dumping incoming webhooks | `webhook-dump [port]` |
 | `worktree` | Fuzzy-manage git worktrees: add, switch, or remove | `worktree <add\|switch\|remove>` |
 | `sharmory` | Interactive HUD — fzf catalog if available, numbered menu otherwise | `sharmory` |
 | `sharmory bench` | Measure how long a clean shell takes to source Sharmory | `sharmory bench [runs]` |

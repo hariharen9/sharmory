@@ -147,6 +147,7 @@ standard alternative) if it is missing.
 
 ## Categories
 
+- **AI & LLM** — `ai`, `gcommit-ai` (`gai`), `ollamals`, `ollamastop`
 - **Navigation & Files** — `mkcd`, `up`, `lsd`, `fcd`, `ftext`, `permsof`, `extract`, `compress`, `duh`, `sizeof`, `findbig`, `emptydirs`, `dupfind`, `bak`, `cwd`, `clipcopy`, `clip`, `treelist`, `recent`, `swap`, `trash`, `lst`, `catn`, `watchrun`
 - **Git** — `gacp`, `gclone`, `gswitch`, `gstash`, `grebase`, `gcamend`, `gdiffstage`, `grecentbranch`, `gpr`, `gopen`, `gwip`, `gunwip`, `gitundo`, `gitprune`, `branchclean`, `branchage`, `prdiff`, `gitlog-today`, `gitlog-graph`, `gitcontributors`, `gitsize`, `gitconflicts`, `gitignore`, `gitbranch-rename`, `gcleanup`
 - **Docker** — `dockernuke`, `dockerclean-images`, `dclean`, `dockerlogs`, `dockersizes`, `denv`, `dbuild`, `dsh`
@@ -154,10 +155,10 @@ standard alternative) if it is missing.
 - **Go** — `gonew`, `gowatch`, `covreport`, `goclean`, `goupdate`, `gomodwhy`, `gobench`, `gorace`, `gobuild`, `goxbuild`, `gocover-func`, `goenv`, `golist`, `goversion`, `gotest`, `gomod-name`, `govscan`, `goimpl`
 - **Node/npm** — `npmclean`, `npmscripts`, `npmoutdated`, `npmsize`, `nodeversion`, `nvmuse`, `tscheck`, `npxrun`, `npmglobal`, `npmlink`, `noderepl`, `npmaudit`, `nodeinfo`, `npmdedup`, `npmwatch`
 - **Python** — `venvcreate`, `pyclean`, `pyfreeze`, `pipinstall`, `pyversion`, `pycheck`, `pytest-run`, `pywatch`, `pydeps`, `pyupgrade`, `pyrequirements-diff`, `pyrun`, `pyprofile`, `pyvenv`
-- **Networking** — `myip`, `localip`, `killport`, `portwho`, `openports`, `portscan`, `dnscheck`, `certcheck`, `tlscheck`, `ipinfo`, `httpstatus`, `apihit`, `headers`, `flushdns`, `tcpcheck`, `pingcheck`, `weather`, `shorten`, `sshconfig`, `proxy`
-- **Security & Encoding** — `passgen`, `genuuid`, `genssh`, `pubkey`, `b64e`, `b64d`, `urlencode`, `urldecode`, `hashfile`, `jwtdecode`, `dotenv-check`
+- **Networking** — `myip`, `localip`, `killport`, `portwho`, `openports`, `portscan`, `dnscheck`, `certcheck`, `tlscheck`, `ipinfo`, `httpstatus`, `apihit`, `headers`, `flushdns`, `tcpcheck`, `pingcheck`, `weather`, `shorten`, `sshconfig`, `proxy`, `corscheck`, `webhook-dump`, `killdev`
+- **Security & Encoding** — `passgen`, `genuuid`, `genssh`, `pubkey`, `b64e`, `b64d`, `urlencode`, `urldecode`, `hashfile`, `jwtdecode`, `jwtexpire`, `dotenv-check`
 - **System & Process** — `mem`, `cpu`, `sysinfo`, `pidtree`, `fkill`, `ports`, `openports`, `now`, `timer`, `diskusage`, `envdiff`
-- **Productivity** — `note`, `todo`, `hist`, `mkproject`, `mktemplate`, `envload`, `envswitch`, `ffind`, `cheat`, `calc`, `qr`, `jsonpp`, `diffjson`, `epoch`, `retry`
+- **Productivity** — `note`, `todo`, `hist`, `mkproject`, `mktemplate`, `envload`, `envswitch`, `ffind`, `cheat`, `calc`, `qr`, `jsonpp`, `diffjson`, `epoch`, `retry`, `slugify`, `codestats`, `pathclean`, `devclean`, `findreplace`
 - **CI/Jenkins** — `jenk-crumb`, `jenk-build`, `jenk-logs`, `jenk-jobs`
   (needs `JENKINS_URL`, `JENKINS_USER`, `JENKINS_TOKEN` env vars)
 - **Management** — `sharmory`, `sharmory list`, `sharmory help`, `sharmory run`, `sharmory doctor`, `sharmory setup`, `sharmory bench`, `sharmory-update`
@@ -338,6 +339,9 @@ standard alternative) if it is missing.
 | `shorten` | `shorten <url>` | Shorten a URL using is.gd |
 | `sshconfig` | `sshconfig` | List all `Host` entries from `~/.ssh/config` with their hostname and user |
 | `proxy` | `proxy <on [host:port]\|off\|status>` | Toggle or inspect `http_proxy` / `https_proxy` environment variables |
+| `corscheck` | `corscheck <url> [origin]` | Send OPTIONS request and print color-coded CORS response headers |
+| `webhook-dump` | `webhook-dump [port]` | Spin up temporary HTTP listener dumping webhook headers & payloads |
+| `killdev` | `killdev [extra-ports...]` | Kill common rogue dev server ports (3000, 3001, 5173, 8000, 8080) |
 
 ### 🔒 Security & Encoding
 
@@ -353,6 +357,7 @@ standard alternative) if it is missing.
 | `urldecode` | `urldecode <text>` | URL-decode a percent-encoded string |
 | `hashfile` | `hashfile <file>` | Print MD5, SHA-1, and SHA-256 hashes of a file |
 | `jwtdecode` | `jwtdecode <token>` | Decode and pretty-print a JWT header and payload (no verification) |
+| `jwtexpire` | `jwtexpire <token>` | Human-readable time remaining for JWT `exp` ("Expires in 2h 15m" / "Expired") |
 | `dotenv-check` | `dotenv-check [file]` | Lint a `.env` file — find duplicates, bad quoting, and missing values |
 
 ### 🖥️ System & Process
@@ -396,6 +401,20 @@ standard alternative) if it is missing.
 | `diffjson` | `diffjson <a> <b>` | Semantic diff of two JSON files — normalizes formatting before comparing |
 | `epoch` | `epoch [value]` | Convert between Unix epoch and human-readable datetime; no args prints current epoch |
 | `retry` | `retry <n> <cmd> [args...]` | Re-run a command up to `n` times with exponential backoff on failure |
+| `slugify` | `slugify "<string>"` | Convert any string to clean URL / git branch slug (`Feature: Add OAuth (v2)` → `feature-add-oauth-v2`) |
+| `codestats` | `codestats [dir]` | Fast, dependency-free SLOC count grouped by file extension (.js, .ts, .py, etc.) |
+| `pathclean` | `pathclean` | Clean up PATH: deduplicates directories, removes non-existent folders |
+| `devclean` | `devclean` | Interactively find and clean heavy dev caches (`node_modules`, `__pycache__`, Docker) |
+| `findreplace` | `findreplace <find> <replace> [dir]` | Cross-platform safe find-and-replace across files with dry-run confirmation |
+
+### 🤖 AI & LLM
+
+| Command | Usage | Description |
+|---|---|---|
+| `ai` | `ai <prompt>` or `cat log.txt \| ai "explain"` | One-shot prompt runner using local Ollama, OpenAI (`OPENAI_API_KEY`), or Gemini (`GEMINI_API_KEY`) |
+| `gcommit-ai` (`gai`) | `gcommit-ai` | Inspects `git diff --cached` and generates a Conventional Commit message with confirmation prompt |
+| `ollamals` | `ollamals` | Fast fuzzy picker to list running Ollama models and inspect VRAM usage |
+| `ollamastop` | `ollamastop [model]` | Unload inactive/running Ollama models from VRAM |
 
 ### 🔧 CI / Jenkins
 
