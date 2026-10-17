@@ -8,10 +8,10 @@ This is the step-by-step process for cutting a new Sharmory release. Follow the 
 
 Sharmory uses [Semantic Versioning](https://semver.org/):
 
-| Change type | Version bump |
-|---|---|
-| Bug fixes, docs, tests | Patch: `1.0.0` → `1.0.1` |
-| New functions, backwards-compatible behavior changes | Minor: `1.0.0` → `1.1.0` |
+| Change type                                                         | Version bump             |
+| ------------------------------------------------------------------- | ------------------------ |
+| Bug fixes, docs, tests                                              | Patch: `1.0.0` → `1.0.1` |
+| New functions, backwards-compatible behavior changes                | Minor: `1.0.0` → `1.2.0` |
 | Breaking changes (function renamed/removed, argument order changed) | Major: `1.0.0` → `2.0.0` |
 
 ---
@@ -33,16 +33,19 @@ All three must exit `0`. Do not proceed if any test fails.
 Update the version constant in each file. All three must be bumped to the same version in the same commit.
 
 **`functions.zsh`** (line ~54):
+
 ```zsh
 typeset -g SHARMORY_VERSION="x.y.z"
 ```
 
 **`functions.bash`** (line ~61):
+
 ```bash
 SHARMORY_VERSION="x.y.z"
 ```
 
 **`functions.ps1`** (line ~16):
+
 ```powershell
 $script:SharmoryVersion = "x.y.z"
 ```
@@ -52,6 +55,7 @@ $script:SharmoryVersion = "x.y.z"
 ## 4. Bump Version in Package Files
 
 **`package.json`** (npm):
+
 ```json
 {
   "version": "x.y.z"
@@ -59,6 +63,7 @@ $script:SharmoryVersion = "x.y.z"
 ```
 
 **`pyproject.toml`** (PyPI):
+
 ```toml
 [project]
 version = "x.y.z"

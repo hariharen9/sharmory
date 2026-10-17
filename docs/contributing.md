@@ -22,6 +22,7 @@ cd sharmory
 ```
 
 Test your changes by sourcing the file directly:
+
 ```bash
 source functions.zsh   # Zsh
 source functions.bash  # Bash
@@ -32,12 +33,12 @@ source functions.bash  # Bash
 
 ## Branch Naming
 
-| Type | Pattern | Example |
-|---|---|---|
-| New function | `feat/function-name` | `feat/gitlog-summary` |
-| Bug fix | `fix/short-description` | `fix/gacp-newline-in-message` |
-| Documentation | `docs/topic` | `docs/adding-a-function` |
-| Refactor | `refactor/short-description` | `refactor/sharmory-registry` |
+| Type          | Pattern                      | Example                       |
+| ------------- | ---------------------------- | ----------------------------- |
+| New function  | `feat/function-name`         | `feat/gitlog-summary`         |
+| Bug fix       | `fix/short-description`      | `fix/gacp-newline-in-message` |
+| Documentation | `docs/topic`                 | `docs/adding-a-function`      |
+| Refactor      | `refactor/short-description` | `refactor/sharmory-registry`  |
 
 Work off `main`. There are no long-lived feature branches.
 
@@ -54,12 +55,13 @@ Use the **Conventional Commits** format:
 Common types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`
 
 Examples:
+
 ```
 feat(git): add gitlog-summary function
 fix(gacp): handle commit messages with newlines
 docs(contributing): add branch naming guide
 test(zsh): add smoke tests for envdiff
-chore: bump version to 1.1.0
+chore: bump version to 1.2.0
 ```
 
 Keep the subject line under 72 characters. Add a body if the change needs explanation.
@@ -138,6 +140,7 @@ Copy this into your PR description:
 ## Code Review
 
 Reviews focus on:
+
 - **Correctness** — does the function do what the description says?
 - **Graceful degradation** — does it fail safely when optional tools are missing?
 - **Cross-platform parity** — does the PS version behave equivalently to the Zsh/Bash versions?
@@ -163,6 +166,7 @@ Bump the version in all three files as part of your PR. See [`docs/release-check
 ## Reporting Bugs
 
 Open a GitHub issue with:
+
 1. Your OS and shell version (`uname -a`, `zsh --version` / `bash --version` / `$PSVersionTable`)
 2. The function name and the command you ran
 3. The full output (including any error messages)
