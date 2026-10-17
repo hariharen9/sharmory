@@ -591,6 +591,7 @@ run  "treelist(depth)" "treelist . 2"
 run  "recent"      "recent 5"
 run  "swap"        "echo a > swapA && echo b > swapB && swap swapA swapB && grep -q b swapA && grep -q a swapB"
 run  "trash"       "echo trashme > trashtest.txt && trash trashtest.txt && [ ! -e trashtest.txt ]"
+run  "catn"        "catn file1.txt"
 if [[ $HAS_TAR -eq 1 ]]; then
     run "extract"    "tar czf t.tar.gz file1.txt && mkdir xd && cd xd && extract ../t.tar.gz"
     run "compress"   "compress out.tar.gz file1.txt"

@@ -343,6 +343,17 @@ function lst {
         ForEach-Object { $_.FullName.Replace((Get-Location).Path + [IO.Path]::DirectorySeparatorChar, './') }
 }
 
+# Print file contents with line numbers
+# Usage: catn <file>
+function catn {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path $Path)) {
+        Write-Host "File not found: $Path"
+        return
+    }
+    Get-Content $Path | ForEach-Object { "$($_.ReadCount) $_" }
+}
+
 #########################################################################
 # 2. GIT
 #########################################################################
@@ -3294,6 +3305,7 @@ function Get-SharmoryRegistry {
         [pscustomobject]@{ Category = "files"; Name = "swap"; Description = "Swap two filenames"; Usage = "swap <file-a> <file-b>"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "trash"; Description = "Move a path to the Recycle Bin"; Usage = "trash <file-or-dir>"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "lst"; Description = "List files modified within a time window"; Usage = "lst <duration>"; Deps = "" }
+        [pscustomobject]@{ Category = "files"; Name = "catn"; Description = "Print file contents with line numbers"; Usage = "catn <file>"; Deps = "" }
         [pscustomobject]@{ Category = "files"; Name = "fcd"; Description = "Interactively cd into a subdirectory via fzf"; Usage = "fcd"; Deps = "fzf" }
         [pscustomobject]@{ Category = "files"; Name = "ftext"; Description = "Fuzzy-search file contents and open match"; Usage = "ftext"; Deps = "fzf" }
         [pscustomobject]@{ Category = "files"; Name = "watchrun"; Description = "Re-run a command on file change"; Usage = "watchrun <path> <command>"; Deps = "watchexec" }

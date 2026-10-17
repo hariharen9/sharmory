@@ -19,6 +19,7 @@ All functions are available in Bash, Zsh, and PowerShell. Sorted alphabetically.
 | `branchage` | Local branches sorted by last commit date | `branchage` |
 | `branchclean` | Delete local branches already merged into main/master | `branchclean` |
 | `calc` | Quick command-line calculator | `calc <expression>` |
+| `catn` | Print file contents with line numbers | `catn <file>` |
 | `certcheck` | TLS certificate expiry date and days remaining for a domain | `certcheck <domain>` |
 | `cheat` | Look up usage examples via tldr, fallback to man | `cheat <command>` |
 | `clip` | Copy stdin or a file to the clipboard (pipe-friendly) | `clip [file]` |

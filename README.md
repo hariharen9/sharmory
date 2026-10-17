@@ -147,7 +147,7 @@ standard alternative) if it is missing.
 
 ## Categories
 
-- **Navigation & Files** — `mkcd`, `up`, `lsd`, `fcd`, `ftext`, `permsof`, `extract`, `compress`, `duh`, `sizeof`, `findbig`, `emptydirs`, `dupfind`, `bak`, `cwd`, `clipcopy`, `clip`, `treelist`, `recent`, `swap`, `trash`, `watchrun`
+- **Navigation & Files** — `mkcd`, `up`, `lsd`, `fcd`, `ftext`, `permsof`, `extract`, `compress`, `duh`, `sizeof`, `findbig`, `emptydirs`, `dupfind`, `bak`, `cwd`, `clipcopy`, `clip`, `treelist`, `recent`, `swap`, `trash`, `lst`, `catn`, `watchrun`
 - **Git** — `gacp`, `gclone`, `gswitch`, `gstash`, `grebase`, `gcamend`, `gdiffstage`, `grecentbranch`, `gpr`, `gopen`, `gwip`, `gunwip`, `gitundo`, `gitprune`, `branchclean`, `branchage`, `prdiff`, `gitlog-today`, `gitlog-graph`, `gitcontributors`, `gitsize`, `gitconflicts`, `gitignore`, `gitbranch-rename`, `gcleanup`
 - **Docker** — `dockernuke`, `dockerclean-images`, `dclean`, `dockerlogs`, `dockersizes`, `denv`, `dbuild`, `dsh`
 - **Kubernetes** — `kns`, `ktop`, `kevents`, `kdesc`, `kport`, `k8sctx`, `klogs`, `kexec`
@@ -193,6 +193,7 @@ standard alternative) if it is missing.
 | `ftext` | `ftext` | Fuzzy-search all file contents with `fzf` and open the matching file in `$EDITOR` |
 | `watchrun` | `watchrun <path> <cmd>` | Re-run a shell command whenever files under `<path>` change (uses `entr` / `watchexec`) |
 | `lst` | `lst <duration>` | List files modified within a time window — `lst 2h`, `lst 30m`, `lst 1d`, `lst 1w`, `lst 6mo`, `lst 1y` |
+| `catn` | `catn <file>` | Print file contents with line numbers |
 
 ### 🌿 Git
 

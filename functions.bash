@@ -28,7 +28,7 @@
 unalias -- \
     mkcd up lsd fcd ftext permsof extract compress duh sizeof findbig \
     emptydirs dupfind bak cwd clipcopy clip watchrun \
-    treelist recent swap trash lst \
+    treelist recent swap trash lst catn \
     gitundo branchclean branchage gitlog-today gacp gclone gwip gunwip \
     gitprune gswitch prdiff gitcontributors gitsize gitconflicts gitignore \
     gstash grebase gopen gpr gitbranch-rename gitlog-graph gcleanup \
@@ -518,6 +518,20 @@ lst() {
               done \
             | sort
     fi
+}
+
+# Print file contents with line numbers
+# Usage: catn <file>
+catn() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: catn <file>"
+        return 1
+    fi
+    if [[ ! -f "$1" ]]; then
+        echo "File not found: $1"
+        return 1
+    fi
+    nl -ba "$1" 2>/dev/null || cat -n "$1" 2>/dev/null || awk '{print NR, $0}' "$1"
 }
 
 #########################################################################
@@ -3785,6 +3799,7 @@ _SHARMORY_REGISTRY=(
     'files^swap^Atomically swap two filenames^swap <file-a> <file-b>^'
     'files^trash^Move a path to the system trash^trash <file-or-dir>^'
     'files^lst^List files modified within a time window^lst <duration>^'
+    'files^catn^Print file contents with line numbers^catn <file>^'
     'git^gitundo^Undo last commit, keep changes staged^gitundo^'
     'git^branchclean^Delete local branches already merged^branchclean^'
     'git^branchage^Local branches sorted by last commit date^branchage^'

@@ -341,6 +341,7 @@ Invoke-SharmoryTest "treelist"  { treelist . }
 Invoke-SharmoryTest "recent"    { recent 5 }
 Invoke-SharmoryTest "swap"      { "a" | Out-File swapA.txt -Encoding ascii; "b" | Out-File swapB.txt -Encoding ascii; swap swapA.txt swapB.txt }
 Invoke-SharmoryTest "trash"     { "trashme" | Out-File trashtest.txt -Encoding ascii; trash trashtest.txt; if (Test-Path trashtest.txt) { throw "not trashed" } }
+Invoke-SharmoryTest "catn"      { catn file1.txt }
 
 #########################################################################
 # 2. GIT
